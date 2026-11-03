@@ -1,253 +1,6 @@
 import SwiftUI
 import AppKit
 
-struct RootView: View {
-    @EnvironmentObject private var hub: Hub
-    @Environment(\.openWindow) private var openWindow
-    @State private var selected: AppEntry?
-    /// Les nouveautés attendent la fin de l'ouverture (et l'arrivée des cartes) pour s'afficher.
-    @State private var sheetsAllowed = false
-
-    var body: some View {
-        ZStack {
-            Theme.bg.ignoresSafeArea()
-            if hub.splashDone {
-                Backdrop().transition(.opacity)
-                Group {
-                    if let s = selected {
-                        DetailView(entry: s) {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { selected = nil }
-                        }
-                        .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                                removal: .move(edge: .trailing).combined(with: .opacity)))
-                    } else {
-                        HomeView { e in
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { selected = e }
-                        }
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    }
-                }
-                .transition(.opacity.combined(with: .scale(scale: 1.03)))
-            } else {
-                Splash {
-                    withAnimation(.easeOut(duration: 0.55)) { hub.splashDone = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { sheetsAllowed = true }
-                }
-                .transition(.opacity)
-            }
-        }
-        .preferredColorScheme(.dark)
-        .sheet(item: Binding(get: { sheetsAllowed ? hub.changelog : nil }, set: { hub.changelog = $0 })) { e in
-            ChangelogSheet(entry: e).environmentObject(hub)
-        }
-        .onAppear {
-            if hub.splashDone { sheetsAllowed = true }
-            // Pour les captures : OSAHUB_OPEN=<id> ouvre directement la fiche d'une app.
-            if let id = ProcessInfo.processInfo.environment["OSAHUB_OPEN"] {
-                selected = hub.entries.first { $0.id == id }
-            }
-            hub.openMain = { [openWindow] in
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-        }
-    }
-}
-
-// MARK: - Accueil
-
-struct HomeView: View {
-    @EnvironmentObject private var hub: Hub
-    let select: (AppEntry) -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                header
-                if !hub.updates.isEmpty { UpdatesBanner() }
-                if hub.offline { OfflineBanner() }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 20)], spacing: 20) {
-                    ForEach(Array(hub.entries.enumerated()), id: \.element.id) { i, e in
-                        AppCard(entry: e, index: i)
-                            .onTapGesture { select(e) }
-                    }
-                }
-                Footer()
-            }
-            .padding(.horizontal, 36)
-            .padding(.top, 46)
-            .padding(.bottom, 28)
-            .frame(maxWidth: 1180)
-            .frame(maxWidth: .infinity)
-        }
-        .scrollIndicators(.never)
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                HubLogo(size: 26)
-                Text("Toutes les apps OsaLabs, au même endroit.")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-            Spacer()
-            RefreshButton()
-        }
-    }
-}
-
-struct RefreshButton: View {
-    @EnvironmentObject private var hub: Hub
-    @State private var turns = 0.0
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let d = hub.lastCheck {
-                Text(hub.checking ? "Recherche…" : "Vérifié \(d.formatted(.relative(presentation: .named)))")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.faint)
-                    .contentTransition(.opacity)
-            }
-            Button {
-                Task { await hub.refresh() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 13, weight: .semibold))
-                    .rotationEffect(.degrees(turns))
-                    .frame(width: 32, height: 32)
-                    .background(Theme.surfaceHi, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.cream)
-            .disabled(hub.checking)
-            .help("Rechercher des mises à jour")
-        }
-        .onChange(of: hub.checking) { _, on in
-            if on { withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { turns += 360 } }
-            else { withAnimation(.spring) { turns = (turns / 360).rounded(.up) * 360 } }
-        }
-    }
-}
-
-struct UpdatesBanner: View {
-    @EnvironmentObject private var hub: Hub
-
-    var body: some View {
-        let list = hub.updates
-        HStack(spacing: 14) {
-            Image(systemName: "sparkles").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white.opacity(0.8))
-                .frame(width: 34, height: 34).background(Theme.surfaceHi, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(list.count == 1 ? "Une mise à jour est disponible" : "\(list.count) mises à jour sont disponibles")
-                    .font(.system(size: 14, weight: .semibold))
-                Text(list.map { "\($0.name) \(hub.releases[$0.id]?.version ?? "")" }.joined(separator: " · "))
-                    .font(.system(size: 12)).foregroundStyle(Theme.dim)
-            }
-            Spacer()
-            Button("Voir les nouveautés") { hub.changelog = list.first }
-                .buttonStyle(PillStyle())
-        }
-        .padding(14)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.line))
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
-}
-
-struct OfflineBanner: View {
-    var body: some View {
-        Label("GitHub ne répond pas : les versions affichées peuvent être anciennes.", systemImage: "wifi.slash")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(Theme.dim)
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(Theme.surface, in: Capsule())
-    }
-}
-
-// MARK: - Carte d'une app
-
-struct AppCard: View {
-    @EnvironmentObject private var hub: Hub
-    let entry: AppEntry
-    var index = 0
-    @State private var hover = false
-    @State private var shown = false
-
-    var body: some View {
-        let accent = Theme.accent(entry.accent)
-        VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .topTrailing) {
-                Color.clear
-                    .overlay {
-                        RemoteImage(url: entry.screenshots.first, mode: .fill) {
-                            ZStack {
-                                LinearGradient(colors: [Color(red: 0.2, green: 0.2, blue: 0.26), Color(red: 0.1, green: 0.1, blue: 0.14)], startPoint: .top, endPoint: .bottom)
-                                Image(systemName: entry.symbol).font(.system(size: 50, weight: .semibold)).foregroundStyle(.white.opacity(0.3))
-                            }
-                        }
-                        .scaleEffect(hover ? 1.05 : 1)
-                    }
-                    .frame(height: 200)
-                    .clipped()
-                .overlay(LinearGradient(colors: [.clear, .clear, Theme.bg.opacity(0.9)], startPoint: .top, endPoint: .bottom))
-
-                if hub.hasUpdate(entry) {
-                    Text("Nouvelle version")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(.white.opacity(0.9), in: Capsule())
-                        .padding(12)
-                } else if hub.isComingSoon(entry) {
-                    Text("Bientôt")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(.black.opacity(0.45), in: Capsule())
-                        .padding(12)
-                }
-            }
-            .frame(height: 200)
-            .clipped()
-
-            HStack(alignment: .center, spacing: 14) {
-                AppIcon(entry: entry, size: 56)
-                    .offset(y: -18)
-                    .padding(.bottom, -18)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.cream)
-                    Text(entry.tagline).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                ActionButton(entry: entry)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 2)
-
-            StatusLine(entry: entry)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 16)
-        }
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(hover ? 0.22 : 0.08), lineWidth: 1))
-        .shadow(color: .black.opacity(hover ? 0.5 : 0.3), radius: hover ? 24 : 14, y: hover ? 14 : 8)
-        .offset(y: hover ? -4 : 0)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onHover { hover = $0 }
-        .animation(.spring(response: 0.38, dampingFraction: 0.8), value: hover)
-        // arrivée des cartes l'une après l'autre
-        .opacity(shown ? 1 : 0)
-        .offset(y: shown ? 0 : 26)
-        .onAppear {
-            withAnimation(.spring(response: 0.7, dampingFraction: 0.82).delay(0.08 + Double(index) * 0.07)) { shown = true }
-        }
-    }
-}
-
 struct StatusLine: View {
     @EnvironmentObject private var hub: Hub
     let entry: AppEntry
@@ -277,6 +30,8 @@ struct StatusLine: View {
         }
         if let latest, hub.releases[entry.id]?.zip != nil { return "Pas installée · v\(latest)" }
         if hub.isComingSoon(entry) { return "Pas encore publiée" }
+        if let until = hub.limitedUntil { return "GitHub en pause jusqu'à \(until.formatted(date: .omitted, time: .shortened))" }
+        if hub.offline { return "Hors ligne" }
         return "Recherche de la dernière version…"
     }
 }
@@ -321,6 +76,8 @@ struct ActionButton: View {
                         .foregroundStyle(Theme.faint)
                         .padding(.horizontal, large ? 22 : 14).padding(.vertical, large ? 11 : 7)
                         .background(Theme.surface, in: Capsule())
+                } else if hub.limitedUntil != nil || hub.offline {
+                    EmptyView()
                 } else {
                     ProgressView().controlSize(.small).frame(width: 60)
                 }
@@ -390,13 +147,36 @@ struct DetailView: View {
                         StatusLine(entry: entry).padding(.top, 4)
                     }
                     Spacer(minLength: 12)
-                    VStack(alignment: .trailing, spacing: 10) {
-                        ActionButton(entry: entry, large: true)
+                    VStack(alignment: .trailing, spacing: 12) {
+                        HStack(spacing: 8) {
+                            ActionButton(entry: entry, large: true)
+                            Menu {
+                                AppMenu(entry: entry)
+                            } label: {
+                                Image(systemName: "ellipsis").font(.system(size: 14, weight: .bold))
+                                    .frame(width: 42, height: 42)
+                                    .background(Theme.surfaceHi, in: Circle())
+                            }
+                            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                            .foregroundStyle(Theme.cream)
+                            .fixedSize()
+                        }
+                        if hub.running.contains(entry.id) {
+                            HStack(spacing: 14) {
+                                RunningBadge()
+                                Button("Quitter") { hub.quitApp(entry) }
+                                Button("Relancer") { hub.relaunchApp(entry) }
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.dim)
+                        }
                         if hub.installed[entry.id] != nil {
-                            Button("Afficher dans le Finder") { hub.revealInFinder(entry) }
-                                .buttonStyle(.plain)
+                            Toggle("Mise à jour automatique", isOn: Binding(get: { hub.autoUpdate.contains(entry.id) }, set: { hub.setAutoUpdate(entry, $0) }))
+                                .toggleStyle(.switch).controlSize(.mini)
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Theme.faint)
+                                .foregroundStyle(Theme.dim)
+                                .help("Quand une nouvelle version sort, OsaHUB l'installe tout seul, si l'app n'est pas ouverte.")
                         }
                     }
                 }
@@ -434,19 +214,79 @@ struct DetailView: View {
                     .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line))
                 }
+
+                VersionHistory(entry: entry)
             }
             .padding(.horizontal, 36)
-            .padding(.top, 46)
+            .padding(.top, 96)
             .padding(.bottom, 36)
             .frame(maxWidth: 1000)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.never)
+        .onAppear { hub.loadHistory(entry) }
     }
 
     private func gallery(_ r: Release?) -> [URL] {
         var seen = Set<URL>()
         return ((r?.images ?? []) + entry.screenshots).filter { seen.insert($0).inserted }
+    }
+}
+
+// MARK: - Historique des versions
+
+struct VersionHistory: View {
+    @EnvironmentObject private var hub: Hub
+    let entry: AppEntry
+    @State private var open: String?
+
+    var body: some View {
+        let list = (hub.history[entry.id] ?? []).filter { $0.version != hub.releases[entry.id]?.version }
+        if !list.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionTitle(title: "Versions précédentes", detail: "pour revenir en arrière si une mise à jour te gêne")
+                VStack(spacing: 0) {
+                    ForEach(Array(list.enumerated()), id: \.element.version) { i, r in
+                        if i > 0 { Rectangle().fill(Theme.line).frame(height: 1) }
+                        row(r)
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line))
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
+    private func row(_ r: Release) -> some View {
+        let expanded = open == r.version
+        let current = hub.installed[entry.id]?.version == r.version
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.faint)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                Text("v\(r.version)").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surfaceHi, in: Capsule())
+                Text(Notes.summary(r.notes) ?? r.title).font(.system(size: 12.5)).foregroundStyle(Theme.dim).lineLimit(1)
+                Spacer(minLength: 8)
+                if let d = r.date { Text(d.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 11.5)).foregroundStyle(Theme.faint) }
+                if current {
+                    Text("installée").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.ok)
+                } else if r.zip != nil && hub.jobs[entry.id] == nil {
+                    Button("Installer") { hub.install(entry, version: r) }
+                        .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
+                        .help("Remplace la version installée par la \(r.version)")
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { open = expanded ? nil : r.version } }
+            if expanded {
+                NotesView(text: r.notes, accent: Theme.cream)
+                    .padding(.leading, 22)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
     }
 }
 
@@ -573,8 +413,20 @@ struct MenuContent: View {
                 }
             }
         }
+        if hub.updates.count > 1 {
+            Button("Tout mettre à jour") { hub.updateAll() }
+        }
+        let installed = hub.entries.filter { hub.installed[$0.id] != nil }
+        if !installed.isEmpty {
+            Divider()
+            Text("Ouvrir")
+            ForEach(installed) { e in
+                Button(hub.running.contains(e.id) ? "\(e.name)  ·  ouverte" : e.name) { hub.open(e) }
+            }
+        }
         Divider()
         Button("Ouvrir OsaHUB") { show() }
+        Button("Recherche rapide…") { show(); hub.palette = true }
         Button("Rechercher des mises à jour") { Task { await hub.refresh() } }
         Divider()
         Button("Quitter OsaHUB") { NSApp.terminate(nil) }.keyboardShortcut("q")

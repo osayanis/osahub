@@ -30,19 +30,71 @@ enum GitHub {
 
     /// nil : le dépôt n'a pas encore de release (ou n'existe pas encore).
     static func latest(repo: String, asset: String) async throws -> Release? {
-        var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
+        guard let data = try await get("https://api.github.com/repos/\(repo)/releases/latest") else { return nil }
+        return parse(try decoder.decode(API.self, from: data), repo: repo, asset: asset)
+    }
+
+    /// GitHub sans compte : 60 requêtes par heure. Limite atteinte : on dit jusqu'à quand.
+    struct RateLimited: Error { let until: Date? }
+
+    /// Appel à l'API avec son ETag : une réponse « rien n'a changé » (304) ne compte pas dans
+    /// la limite. La dernière réponse est gardée sur le disque et resservie si la limite est
+    /// atteinte. nil : 404 (pas de release, ou dépôt pas encore créé).
+    static func get(_ address: String) async throws -> Data? {
+        let url = URL(string: address)!
+        let fm = FileManager.default
+        let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("com.osalabs.osahub/api", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let key = address.replacingOccurrences(of: "https://api.github.com/", with: "").map { $0.isLetter || $0.isNumber ? $0 : "_" }
+        let body = dir.appendingPathComponent(String(key) + ".json"), tag = dir.appendingPathComponent(String(key) + ".etag")
+        let cached = try? Data(contentsOf: body)
+
+        var req = URLRequest(url: url)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("OsaHUB", forHTTPHeaderField: "User-Agent")
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.timeoutInterval = 15
+        if cached != nil, let etag = try? String(contentsOf: tag, encoding: .utf8) { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         let (data, resp) = try await URLSession.shared.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if code == 404 { return nil }
-        guard code == 200 else { throw URLError(.badServerResponse) }
+        let http = resp as? HTTPURLResponse
+        switch http?.statusCode ?? 0 {
+        case 200:
+            try? data.write(to: body)
+            if let etag = http?.value(forHTTPHeaderField: "ETag") { try? etag.write(to: tag, atomically: true, encoding: .utf8) }
+            return data
+        case 304 where cached != nil:
+            return cached
+        case 404:
+            return nil
+        case 403, 429:
+            if let cached { RateLimit.hit(http); return cached }
+            throw RateLimited(until: RateLimit.reset(http))
+        default:
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    enum RateLimit {
+        nonisolated(unsafe) static var until: Date?
+        static func reset(_ r: HTTPURLResponse?) -> Date? {
+            (r?.value(forHTTPHeaderField: "x-ratelimit-reset")).flatMap(Double.init).map(Date.init(timeIntervalSince1970:))
+        }
+        static func hit(_ r: HTTPURLResponse?) { until = reset(r) ?? Date().addingTimeInterval(3600) }
+    }
+
+    /// Les dernières versions publiées (pour l'historique et revenir à une ancienne version).
+    static func history(repo: String, asset: String, count: Int = 15) async throws -> [Release] {
+        guard let data = try await get("https://api.github.com/repos/\(repo)/releases?per_page=\(count)") else { return [] }
+        return try decoder.decode([API].self, from: data).map { parse($0, repo: repo, asset: asset) }
+    }
+
+    private static var decoder: JSONDecoder {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
-        let r = try dec.decode(API.self, from: data)
+        return dec
+    }
 
+    private static func parse(_ r: API, repo: String, asset: String) -> Release {
         let body = r.body ?? ""
         let (notes, inline) = extractImages(body, repo: repo)
         let attached = r.assets

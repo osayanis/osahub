@@ -29,6 +29,8 @@ final class Hub: ObservableObject {
     @Published var checked: Set<String> = []
     @Published var checking = false
     @Published var offline = false
+    /// Limite de l'API GitHub atteinte : jusqu'à quand (les versions viennent du cache).
+    @Published var limitedUntil: Date?
     @Published var lastCheck: Date?
     @Published var jobs: [String: Job] = [:]
     /// L'app dont on montre les nouveautés (feuille par-dessus tout).
@@ -37,9 +39,36 @@ final class Hub: ObservableObject {
     @Published var selfJob: Job?
     @Published var splashDone = false
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
+    /// Apps de la suite ouvertes en ce moment.
+    @Published var running: Set<String> = []
+    /// Les versions publiées de chaque app (chargées à l'ouverture de sa fiche).
+    @Published var history: [String: [Release]] = [:]
+    /// Apps mises à jour toutes seules (si elles ne sont pas ouvertes).
+    @Published var autoUpdate: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "auto") ?? [])
+    @Published var services: [String: ServiceState] = [:]
+    /// La palette ⌘K est ouverte.
+    @Published var palette = false
+    /// L'app dont on demande confirmation avant de la mettre à la Corbeille.
+    @Published var uninstallAsk: AppEntry?
+
+    enum ServiceState: Equatable { case unknown, up(Int), down }
+    struct Service: Identifiable {
+        let id: String
+        let name: String
+        let url: URL
+        let symbol: String
+    }
+    /// Les sites OsaLabs, dont OsaHUB montre l'état.
+    static let serviceList = [
+        Service(id: "hub", name: "osalabs.fr", url: URL(string: "https://osalabs.fr")!, symbol: "globe"),
+        Service(id: "osadrop", name: "OsaDrop", url: URL(string: "https://osadrop.osalabs.fr")!, symbol: "paperplane.fill"),
+        Service(id: "osacast", name: "OsaCast", url: URL(string: "https://osacast.osalabs.fr")!, symbol: "play.tv.fill"),
+        Service(id: "osaparty", name: "OsaParty", url: URL(string: "https://osaparty.osalabs.fr")!, symbol: "music.note.house.fill"),
+    ]
 
     var openMain: (() -> Void)?
     private var timer: Timer?
+    private var serviceTimer: Timer?
     private let defaults = UserDefaults.standard
 
     static var version: String {
@@ -70,6 +99,44 @@ final class Hub: ObservableObject {
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Hub.shared.scanInstalled() }
+        }
+        // une app de la suite s'ouvre ou se ferme
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            ws.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { Hub.shared.scanRunning() }
+            }
+        }
+        scanRunning()
+        Task { await pingServices() }
+        serviceTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
+            Task { @MainActor in await Hub.shared.pingServices() }
+        }
+    }
+
+    func scanRunning() {
+        let ids = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let r = Set(entries.filter { ids.contains($0.bundleId) }.map(\.id))
+        if r != running { running = r }
+    }
+
+    /// Chaque site est appelé une fois ; « en ligne » s'il répond sans erreur serveur.
+    func pingServices() async {
+        await withTaskGroup(of: (String, ServiceState).self) { group in
+            for s in Self.serviceList {
+                let url = s.url, id = s.id
+                group.addTask {
+                    var req = URLRequest(url: url)
+                    req.httpMethod = "HEAD"
+                    req.timeoutInterval = 8
+                    req.cachePolicy = .reloadIgnoringLocalCacheData
+                    let t0 = Date()
+                    guard let (_, resp) = try? await URLSession.shared.data(for: req),
+                          let code = (resp as? HTTPURLResponse)?.statusCode, code < 500 else { return (id, .down) }
+                    return (id, .up(Int(Date().timeIntervalSince(t0) * 1000)))
+                }
+            }
+            for await (id, state) in group { services[id] = state }
         }
     }
 
@@ -114,11 +181,14 @@ final class Hub: ObservableObject {
         scanInstalled()
 
         var failures = 0
+        var limited: Date?? = nil
+        GitHub.RateLimit.until = nil
         await withTaskGroup(of: (String, Release?, Bool).self) { group in
             for e in entries {
                 let repo = e.repo, asset = e.asset, id = e.id
                 group.addTask {
                     do { return (id, try await GitHub.latest(repo: repo, asset: asset), true) }
+                    catch let e as GitHub.RateLimited { return ("__limite:\(e.until?.timeIntervalSince1970 ?? 0)", nil, false) }
                     catch { return (id, nil, false) }
                 }
             }
@@ -127,6 +197,10 @@ final class Hub: ObservableObject {
                 catch { return ("__osahub", nil, false) }
             }
             for await (id, release, ok) in group {
+                if id.hasPrefix("__limite:") {
+                    let t = Double(id.dropFirst(9)) ?? 0
+                    limited = .some(t > 0 ? Date(timeIntervalSince1970: t) : nil)
+                }
                 if !ok { failures += 1; continue }
                 if id == "__osahub" {
                     selfRelease = release.flatMap { Version.isNewer($0.version, than: Hub.version) && $0.zip != nil ? $0 : nil }
@@ -136,8 +210,14 @@ final class Hub: ObservableObject {
                 releases[id] = release
             }
         }
-        offline = failures > entries.count / 2
+        if let l = limited { limitedUntil = l ?? Date().addingTimeInterval(3600) } else { limitedUntil = GitHub.RateLimit.until }
+        offline = failures > entries.count / 2 && limited == nil
+        scanRunning()
         announce()
+        // mises à jour automatiques : seulement les apps fermées (on ne coupe personne)
+        for e in updates where autoUpdate.contains(e.id) && !running.contains(e.id) && jobs[e.id] == nil {
+            install(e)
+        }
     }
 
     // MARK: Nouveautés
@@ -149,7 +229,7 @@ final class Hub: ObservableObject {
     /// Nouvelle version d'une app installée : on montre ses nouveautés (une fois par version),
     /// et une notification si OsaHUB est en arrière-plan.
     private func announce() {
-        let fresh = updates.filter { defaults.string(forKey: seenKey($0.id)) != releases[$0.id]?.version }
+        let fresh = updates.filter { defaults.string(forKey: seenKey($0.id)) != releases[$0.id]?.version && !autoUpdate.contains($0.id) }
         if changelog == nil, let first = fresh.first {
             changelog = first
         }
@@ -192,29 +272,31 @@ final class Hub: ObservableObject {
 
     // MARK: Actions
 
-    func install(_ e: AppEntry) {
+    func install(_ e: AppEntry, version chosen: Release? = nil) {
         if case .downloading = jobs[e.id] { return }
         if jobs[e.id] == .installing { return }
-        guard let zip = releases[e.id]?.zip else { return }
+        let target = chosen ?? releases[e.id]
+        guard let zip = target?.zip else { return }
         jobs[e.id] = .downloading(0)
         let current = installed[e.id]?.url
         Task {
             do {
-                let release = releases[e.id]?.version
-                let target = try await Installer.install(e, from: zip, current: current, progress: { p in
+                let release = target?.version
+                let installedAt = try await Installer.install(e, from: zip, current: current, progress: { p in
                     Task { @MainActor in
                         if case .downloading = Hub.shared.jobs[e.id] { Hub.shared.jobs[e.id] = .downloading(p) }
                     }
                 }, installing: {
                     Task { @MainActor in Hub.shared.jobs[e.id] = .installing }
                 })
-                if let release, let info = Hub.info(target) {
+                if let release, let info = Hub.info(installedAt) {
                     let plist = info["CFBundleShortVersionString"] as? String ?? "0"
-                    defaults.set(["release": release, "plist": plist, "path": target.path], forKey: installedKey(e.id))
+                    defaults.set(["release": release, "plist": plist, "path": installedAt.path], forKey: installedKey(e.id))
                 }
                 scanInstalled()
+                scanRunning()
                 jobs[e.id] = .done
-                if let v = releases[e.id]?.version { defaults.set(v, forKey: seenKey(e.id)) }
+                if chosen == nil, let v = releases[e.id]?.version { defaults.set(v, forKey: seenKey(e.id)) }
                 try? await Task.sleep(for: .seconds(1.6))
                 if changelog?.id == e.id { changelog = nil }
                 try? await Task.sleep(for: .seconds(0.8))
@@ -228,6 +310,64 @@ final class Hub: ObservableObject {
     func open(_ e: AppEntry) {
         guard let url = installed[e.id]?.url else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    func updateAll() {
+        for e in updates { install(e) }
+    }
+
+    func quitApp(_ e: AppEntry) {
+        Task { _ = await Installer.quit(e.bundleId); scanRunning() }
+    }
+
+    func relaunchApp(_ e: AppEntry) {
+        guard let url = installed[e.id]?.url else { return }
+        Task {
+            _ = await Installer.quit(e.bundleId)
+            try? await Task.sleep(for: .milliseconds(300))
+            _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            scanRunning()
+        }
+    }
+
+    /// OsaHUB ne désinstalle que ce qu'il range lui-même (Applications), jamais une copie
+    /// de développement trouvée ailleurs.
+    func canUninstall(_ e: AppEntry) -> Bool {
+        guard let url = installed[e.id]?.url else { return false }
+        let dir = url.deletingLastPathComponent().standardizedFileURL.path
+        return dir == "/Applications" || dir == Installer.home.appendingPathComponent("Applications").standardizedFileURL.path
+    }
+
+    /// Quitte l'app et la met à la Corbeille (récupérable).
+    func uninstall(_ e: AppEntry) {
+        guard canUninstall(e), let url = installed[e.id]?.url else { return }
+        Task {
+            _ = await Installer.quit(e.bundleId)
+            do {
+                _ = try await NSWorkspace.shared.recycle([url])
+                defaults.removeObject(forKey: installedKey(e.id))
+                defaults.removeObject(forKey: seenKey(e.id))
+                autoUpdate.remove(e.id)
+                defaults.set(Array(autoUpdate), forKey: "auto")
+            } catch {
+                jobs[e.id] = .failed("Impossible de mettre \(e.name) à la Corbeille.")
+            }
+            scanInstalled()
+            scanRunning()
+        }
+    }
+
+    func setAutoUpdate(_ e: AppEntry, _ on: Bool) {
+        if on { autoUpdate.insert(e.id) } else { autoUpdate.remove(e.id) }
+        defaults.set(Array(autoUpdate), forKey: "auto")
+        if on, hasUpdate(e), !running.contains(e.id) { install(e) }
+    }
+
+    func loadHistory(_ e: AppEntry) {
+        guard history[e.id] == nil else { return }
+        Task {
+            if let list = try? await GitHub.history(repo: e.repo, asset: e.asset) { history[e.id] = list }
+        }
     }
 
     func revealInFinder(_ e: AppEntry) {

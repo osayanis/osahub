@@ -19,6 +19,8 @@ struct OsaHubApp: App {
             CommandGroup(after: .appInfo) {
                 Button("Rechercher des mises à jour") { Task { await Hub.shared.refresh() } }
                     .keyboardShortcut("r")
+                Button("Recherche rapide") { Hub.shared.palette.toggle() }
+                    .keyboardShortcut("k")
             }
         }
 
