@@ -1,0 +1,64 @@
+[
+  {
+    "id": "osanotch",
+    "name": "OsaNotch",
+    "tagline": "Ton notch devient une Dynamic Island, avec une mascotte.",
+    "description": "Ta musique et ses paroles, tes fichiers, ton presse-papier, ton calendrier, OsaDrop et OsaCast, rangés dans l'encoche du Mac. Une petite mascotte y vit et réagit à ce qui se passe.",
+    "repo": "osayanis/osanotch-native",
+    "bundleId": "com.osalabs.osanotch",
+    "asset": "OsaNotch.zip",
+    "accent": "lilac",
+    "symbol": "rectangle.topthird.inset.filled",
+    "icon": "https://raw.githubusercontent.com/osayanis/osanotch-native/HEAD/.github/assets/icon.png",
+    "screenshots": ["https://raw.githubusercontent.com/osayanis/osanotch-native/HEAD/.github/assets/banner.png"]
+  },
+  {
+    "id": "osawallpaper",
+    "name": "OsaWallpaper",
+    "tagline": "Ton écran verrouillé prend les couleurs de ta musique.",
+    "description": "Des fonds d'écran animés et un écran verrouillé qui suit le morceau en cours. Les pastilles son et luminosité reprennent le style de la suite.",
+    "repo": "osayanis/osawallpaper",
+    "bundleId": "com.osalabs.osawallpaper",
+    "asset": "OsaWallpaper.zip",
+    "accent": "pink",
+    "symbol": "photo.stack",
+    "icon": "https://raw.githubusercontent.com/osayanis/osawallpaper/HEAD/.github/assets/icon.png",
+    "screenshots": [
+      "https://raw.githubusercontent.com/osayanis/osawallpaper/HEAD/.github/assets/lockscreen.jpg",
+      "https://raw.githubusercontent.com/osayanis/osawallpaper/HEAD/.github/assets/gallery.jpg",
+      "https://raw.githubusercontent.com/osayanis/osawallpaper/HEAD/.github/assets/lockscreen-photo.jpg",
+      "https://raw.githubusercontent.com/osayanis/osawallpaper/HEAD/.github/assets/toast.png",
+      "https://raw.githubusercontent.com/osayanis/osawallpaper/HEAD/.github/assets/onboarding.png"
+    ]
+  },
+  {
+    "id": "osaboot",
+    "name": "OsaBoot",
+    "tagline": "Flasher une clé USB, même avec une ISO Windows.",
+    "description": "Copie une image .iso ou .img sur une clé USB puis la vérifie. Prépare aussi une clé d'installation Windows 10 ou 11 depuis une ISO officielle.",
+    "repo": "osayanis/osaboot",
+    "bundleId": "com.osalabs.osaboot",
+    "asset": "OsaBoot.zip",
+    "accent": "mint",
+    "symbol": "externaldrive.fill",
+    "icon": "https://raw.githubusercontent.com/osayanis/osaboot/HEAD/.github/assets/icon.png",
+    "screenshots": [
+      "https://raw.githubusercontent.com/osayanis/osaboot/HEAD/.github/assets/ready.png",
+      "https://raw.githubusercontent.com/osayanis/osaboot/HEAD/.github/assets/working.png",
+      "https://raw.githubusercontent.com/osayanis/osaboot/HEAD/.github/assets/done.png",
+      "https://raw.githubusercontent.com/osayanis/osaboot/HEAD/.github/assets/empty.png"
+    ]
+  },
+  {
+    "id": "osaweight",
+    "name": "OsaWeight",
+    "tagline": "Une balance de cuisine dans le trackpad.",
+    "description": "Les trackpads Force Touch ont des capteurs de force sous la dalle : OsaWeight les lit et affiche le poids de ce que tu poses dessus.",
+    "repo": "osayanis/osaweight",
+    "bundleId": "com.osalabs.osaweight",
+    "asset": "OsaWeight.zip",
+    "accent": "blue",
+    "symbol": "scalemass.fill",
+    "screenshots": []
+  }
+]
