@@ -12,6 +12,25 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
+            if !hub.onboarded {
+                // Premier lancement : l'accueil (merci, la suite Osa, entrer) ; ensuite seulement
+                // le logo vivant s'envole vers la barre, comme à chaque ouverture.
+                OnboardingView { hub.finishOnboarding() }
+                    .transition(.opacity)
+                    .zIndex(5)
+            } else {
+                main
+            }
+        }
+        .animation(.easeInOut(duration: 0.6), value: hub.onboarded)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hub.palette)
+        .preferredColorScheme(.dark)
+        .modifier(RootSheets(sheetsAllowed: $sheetsAllowed))
+        .onAppear(perform: appeared)
+    }
+
+    @ViewBuilder private var main: some View {
+        ZStack {
             if hub.splashDone {
                 Backdrop().transition(.opacity)
                 Group {
@@ -37,8 +56,42 @@ struct RootView: View {
                     .zIndex(10)
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hub.palette)
-        .preferredColorScheme(.dark)
+    }
+
+    private func appeared() {
+        if hub.splashDone { sheetsAllowed = true }
+        // Pour les captures : OSAHUB_OPEN=<id> ouvre directement la fiche d'une app.
+        if ProcessInfo.processInfo.environment["OSAHUB_PALETTE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { hub.palette = true }
+        }
+        if let id = ProcessInfo.processInfo.environment["OSAHUB_OPEN"] {
+            selected = hub.entries.first { $0.id == id }
+        }
+        hub.openMain = { [openWindow] in
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        // Relancé par une mise à jour automatique : la fenêtre se referme aussitôt.
+        if Hub.autoUpdated && !RootView.hiddenOnce {
+            RootView.hiddenOnce = true
+            DispatchQueue.main.async {
+                for w in NSApp.windows where w.isVisible && w.styleMask.contains(.titled) && !(w is NSPanel) { w.close() }
+            }
+        }
+    }
+
+    private func go(_ e: AppEntry?) {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { selected = e }
+    }
+}
+
+/// Les feuilles et confirmations de la fenêtre principale.
+private struct RootSheets: ViewModifier {
+    @EnvironmentObject private var hub: Hub
+    @Binding var sheetsAllowed: Bool
+
+    func body(content: Content) -> some View {
+        content
         .sheet(item: Binding(get: { sheetsAllowed ? hub.changelog : nil }, set: { hub.changelog = $0 })) { e in
             ChangelogSheet(entry: e).environmentObject(hub)
         }
@@ -50,31 +103,6 @@ struct RootView: View {
         } message: { e in
             Text("\(e.name) sera quitté s'il est ouvert. Tu pourras le récupérer dans la Corbeille ou le réinstaller depuis OsaHUB.")
         }
-        .onAppear {
-            if hub.splashDone { sheetsAllowed = true }
-            // Pour les captures : OSAHUB_OPEN=<id> ouvre directement la fiche d'une app.
-            if ProcessInfo.processInfo.environment["OSAHUB_PALETTE"] != nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { hub.palette = true }
-            }
-            if let id = ProcessInfo.processInfo.environment["OSAHUB_OPEN"] {
-                selected = hub.entries.first { $0.id == id }
-            }
-            hub.openMain = { [openWindow] in
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            // Relancé par une mise à jour automatique : la fenêtre se referme aussitôt.
-            if Hub.autoUpdated && !RootView.hiddenOnce {
-                RootView.hiddenOnce = true
-                DispatchQueue.main.async {
-                    for w in NSApp.windows where w.isVisible && w.styleMask.contains(.titled) && !(w is NSPanel) { w.close() }
-                }
-            }
-        }
-    }
-
-    private func go(_ e: AppEntry?) {
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { selected = e }
     }
 }
 

@@ -90,6 +90,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         add("Ouvrir OsaHUB", key: "o") { StatusMenu.show() }
         add("Recherche rapide…") { [hub] in StatusMenu.show(); hub.palette = true }
+        add("Revoir l’accueil") { [hub] in StatusMenu.show(); hub.replayOnboarding() }
         add("Rechercher des mises à jour") { [hub] in Task { await hub.refresh() } }
         add("Mettre à jour OsaHUB tout seul") { [hub] in hub.setAutoSelf(!hub.autoSelf) }
         menu.items.last?.state = hub.autoSelf ? .on : .off

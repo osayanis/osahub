@@ -43,6 +43,14 @@ final class Hub: ObservableObject {
     /// OsaHUB se met à jour tout seul (activé par défaut), quand sa fenêtre est fermée.
     @Published var autoSelf = UserDefaults.standard.object(forKey: "autoSelf") as? Bool ?? true
     @Published var splashDone = false
+    /// L'accueil des nouveaux utilisateurs a été vu. Ceux qui utilisaient déjà OsaHUB (des
+    /// réglages existent) ne le voient pas d'office ; OSAHUB_ONBOARDING=1 le force (captures).
+    @Published var onboarded: Bool = {
+        if ProcessInfo.processInfo.environment["OSAHUB_ONBOARDING"] != nil { return false }
+        let d = UserDefaults.standard
+        if d.object(forKey: "onboarded") != nil { return d.bool(forKey: "onboarded") }
+        return d.dictionaryRepresentation().keys.contains { $0.hasPrefix("installe.") || $0.hasPrefix("vu.") }
+    }()
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// Apps de la suite ouvertes en ce moment.
     @Published var running: Set<String> = []
@@ -402,6 +410,18 @@ final class Hub: ObservableObject {
         let busy = jobs.values.contains { if case .downloading = $0 { return true }; return $0 == .installing }
         guard !busy else { return }
         updateSelf(background: true)
+    }
+
+    func finishOnboarding() {
+        defaults.set(true, forKey: "onboarded")
+        splashDone = false
+        onboarded = true
+    }
+
+    /// « Revoir l'accueil » (menu de la barre) : rouvre la fenêtre sur l'accueil.
+    func replayOnboarding() {
+        onboarded = false
+        openMain?()
     }
 
     func setAutoSelf(_ on: Bool) {
