@@ -10,13 +10,22 @@
   <img src="https://img.shields.io/badge/un%20projet-OsaLabs-b7a5ff" alt="OsaLabs">
 </p>
 
-<p align="center"><img src=".github/assets/home.png" width="760" alt="L'accueil d'OsaHUB"></p>
+<p align="center">
+  <a href="https://github.com/osayanis/osahub/releases/latest/download/OsaHUB.dmg"><img src="https://img.shields.io/badge/T%C3%A9l%C3%A9charger-OsaHUB.dmg-111?style=for-the-badge&logo=apple&logoColor=white" alt="Télécharger OsaHUB.dmg"></a>
+</p>
+<p align="center"><sub>Mac Apple Silicon · macOS 14 ou plus · toujours la dernière version · <a href="https://osalabs.fr/osahub">osalabs.fr/osahub</a></sub></p>
+
+<p align="center"><img src="docs/accueil.png" width="760" alt="L'accueil d'OsaHUB"></p>
 
 ## Ce qu'il fait
 
 - **Un catalogue** : OsaNotch, OsaWallpaper, OsaBoot, OsaWeight… avec leurs captures, leur version installée et la dernière publiée.
 - **Installer en un clic** : OsaHUB télécharge l'app depuis sa release GitHub, vérifie que l'archive contient bien la bonne app (identifiant + signature intacte), puis la range dans Applications.
 - **Les nouveautés à chaque mise à jour** : quand une app installée a une nouvelle version, OsaHUB affiche ses notes de version avec ses captures, puis la met à jour. Si l'app tournait, il la quitte et la relance.
+- **Il se met à jour tout seul**, comme les apps qu'il gère, quand sa fenêtre est fermée.
+- **Une seule mascotte dans la barre des menus** : OsaWallpaper range son menu dans celui d'OsaHUB, plus besoin d'une icône par app.
+- **Un écran d'accueil pour les nouveaux** : trois pages pour découvrir la suite et cocher les apps à installer tout de suite.
+- **Lancement rapide** : ⌘1…⌘9 ouvre tes apps au clavier.
 - **Il veille** : fenêtre fermée, OsaHUB reste dans la barre des menus, vérifie toutes les 6 heures et envoie une notification. Il peut s'ouvrir à la connexion.
 - **Tout mettre à jour** en un clic, ou **automatiquement** app par app (seulement quand elle est fermée : OsaHUB ne coupe personne).
 - **Tes apps sous la main** : lesquelles sont ouvertes, Ouvrir / Quitter / Relancer, depuis la fenêtre, le clic droit sur une carte ou la barre des menus.
@@ -28,6 +37,11 @@
 - **Un logo vivant** : à l'ouverture, une poussière converge, les quatre tuiles se déplient, la flèche tombe, les lettres montent, puis le logo s'envole se ranger en haut de la fenêtre, où il ondule quand OsaHUB travaille. Noir et blanc, comme le reste de la suite. Un clic passe l'animation.
 
 <p align="center">
+  <img src="docs/bienvenue-1.png" width="252" alt="Bienvenue dans la suite Osa">
+  <img src="docs/bienvenue-2.png" width="252" alt="Une suite, pas juste des apps">
+  <img src="docs/bienvenue-3.png" width="252" alt="Choisir les apps à installer">
+</p>
+<p align="center">
   <img src=".github/assets/changelog.png" width="380" alt="Les nouveautés d'une mise à jour">
   <img src=".github/assets/detail.png" width="380" alt="La fiche d'une app">
 </p>
@@ -38,11 +52,12 @@
 
 ## Installation
 
-1. Télécharge `OsaHUB.dmg` depuis la [dernière release](https://github.com/osayanis/osahub/releases/latest).
-2. Glisse OsaHUB dans Applications.
-3. La première fois : **clic droit → Ouvrir** (l'app n'est pas notarisée par Apple).
+1. Télécharge **[OsaHUB.dmg](https://github.com/osayanis/osahub/releases/latest/download/OsaHUB.dmg)** (ce lien donne toujours la dernière version).
+2. Ouvre le DMG et glisse OsaHUB dans Applications.
+3. Lance-le. Si macOS bloque l'ouverture la première fois : **clic droit sur OsaHUB → Ouvrir**, puis confirme. L'app est signée, mais pas notarisée par Apple : c'est à faire une seule fois.
+4. L'écran d'accueil te propose d'installer OsaNotch, OsaWallpaper et OsaBoot. Ensuite, OsaHUB s'occupe des mises à jour.
 
-Mac Apple Silicon, macOS 14 ou plus.
+Il faut un Mac Apple Silicon sous macOS 14 ou plus. Toutes les versions sont dans les [releases](https://github.com/osayanis/osahub/releases).
 
 ## Ajouter une app ou des captures
 
