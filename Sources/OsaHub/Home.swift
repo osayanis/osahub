@@ -65,8 +65,8 @@ struct RootView: View {
 
     private func appeared() {
         // OSAHUB_NO_SHEETS=1 : captures sans la feuille des nouveautés (et sans la marquer vue)
-        if ProcessInfo.processInfo.environment["OSAHUB_NO_SHEETS"] != nil { sheetsAllowed = false; return }
-        if hub.splashDone { sheetsAllowed = true }
+        let noSheets = ProcessInfo.processInfo.environment["OSAHUB_NO_SHEETS"] != nil
+        if hub.splashDone && !noSheets { sheetsAllowed = true }
         // Pour les captures : OSAHUB_OPEN=<id> ouvre directement la fiche d'une app.
         if ProcessInfo.processInfo.environment["OSAHUB_PALETTE"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { hub.palette = true }

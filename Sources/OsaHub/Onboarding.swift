@@ -540,6 +540,8 @@ private struct OnboardingDots: View {
 struct DustField: View {
     let reduceMotion: Bool
     var intensity: Double = 1
+    /// Fenêtre en arrière-plan : la poussière se fige (pas de calcul pour rien).
+    @Environment(\.controlActiveState) private var active
     @State private var start = Date()
     private static let seeds: [(x: Double, y: Double, r: Double, s: Double, p: Double)] = {
         var g = SeededRandom(seed: 7)
@@ -547,7 +549,7 @@ struct DustField: View {
     }()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { tl in
+        TimelineView(.animation(minimumInterval: 1 / 20, paused: reduceMotion || active == .inactive)) { tl in
             let t = tl.date.timeIntervalSince(start)
             Canvas { ctx, size in
                 for d in Self.seeds {
