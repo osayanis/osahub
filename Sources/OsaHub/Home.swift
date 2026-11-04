@@ -8,6 +8,8 @@ struct RootView: View {
     @State private var selected: AppEntry?
     /// Les nouveautés attendent la fin de l'ouverture (et l'arrivée des cartes) pour s'afficher.
     @State private var sheetsAllowed = false
+    /// L'accueil a défilé : la barre du haut prend un fond flou et un trait.
+    @State private var scrolled = false
 
     var body: some View {
         ZStack {
@@ -39,12 +41,13 @@ struct RootView: View {
                             .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
                                                     removal: .move(edge: .trailing).combined(with: .opacity)))
                     } else {
-                        HomeView { go($0) }
+                        HomeView(scrolled: $scrolled) { go($0) }
                             .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     }
                 }
                 .transition(.opacity)
-                TopBar().transition(.opacity)
+                // sur l'accueil, la barre suit le défilement ; sur une fiche, le dégradé habituel
+                TopBar(scrolled: selected == nil ? scrolled : nil).transition(.opacity)
             }
             LivingLogo(docked: hub.splashDone, finish: {
                 withAnimation(.spring(response: 0.85, dampingFraction: 0.86)) { hub.splashDone = true }
@@ -116,6 +119,9 @@ private struct RootSheets: ViewModifier {
 /// vérification à droite. Le contenu glisse dessous en s'estompant.
 struct TopBar: View {
     @EnvironmentObject private var hub: Hub
+    /// nil : fiche d'une app (dégradé fixe). Sinon : rien en haut de l'accueil, puis un fond
+    /// flou et un trait dès que le contenu passe dessous.
+    var scrolled: Bool?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -128,10 +134,21 @@ struct TopBar: View {
             .frame(height: 64)
             .padding(.top, LivingLogo.dockedY - 32)
             .background(alignment: .top) {
-                LinearGradient(stops: [.init(color: Theme.bg, location: 0), .init(color: Theme.bg, location: 0.55), .init(color: Theme.bg.opacity(0), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(height: 120)
+                if let scrolled {
+                    ZStack(alignment: .bottom) {
+                        Rectangle().fill(.ultraThinMaterial)
+                        Theme.bg.opacity(0.72)
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                    }
+                    .opacity(scrolled ? 1 : 0)
+                    .animation(.easeOut(duration: 0.18), value: scrolled)
                     .allowsHitTesting(false)
+                } else {
+                    LinearGradient(stops: [.init(color: Theme.bg, location: 0), .init(color: Theme.bg, location: 0.55), .init(color: Theme.bg.opacity(0), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 120)
+                        .allowsHitTesting(false)
+                }
             }
             Spacer()
         }
@@ -201,42 +218,53 @@ struct RefreshButton: View {
 struct HomeView: View {
     @EnvironmentObject private var hub: Hub
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var scrolled: Bool
     let select: (AppEntry) -> Void
 
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: 32) {
                 StatusHero()
                     .appear(0)
-                MaisonStats()
-                    .appear(1)
                 MaisonLauncher()
-                    .appear(2)
+                    .appear(1)
                 VStack(alignment: .leading, spacing: 14) {
-                    SectionTitle(title: "Les apps", detail: "\(hub.installed.count) sur \(hub.entries.count) installées")
+                    SectionTitle(title: "Les apps", detail: "clic droit pour les actions")
+                        .appear(2)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 20)], spacing: 20) {
                         ForEach(Array(hub.entries.enumerated()), id: \.element.id) { i, e in
                             AppCard(entry: e, index: i) { select(e) }
                         }
                     }
                 }
+                // le journal et les astuces côte à côte, à la même hauteur
                 HStack(alignment: .top, spacing: 20) {
                     MaisonJournal()
                     MaisonTips()
                         .frame(width: 360)
                 }
-                .appear(6)
+                .fixedSize(horizontal: false, vertical: true)
+                .appear(4 + hub.entries.count)
                 ServicesStrip()
-                    .appear(7)
-                Footer().id("bas")
+                    .appear(5 + hub.entries.count)
+                Footer()
             }
             .padding(.horizontal, 36)
-            .padding(.top, 96)
+            .padding(.top, 92)
             .padding(.bottom, 28)
             .frame(maxWidth: 1180)
             .frame(maxWidth: .infinity)
+            .id("bas")
+            .background {
+                GeometryReader { g in
+                    Color.clear.preference(key: MaisonScrollKey.self, value: g.frame(in: .named("accueil")).minY)
+                }
+            }
         }
+        .coordinateSpace(.named("accueil"))
+        .modifier(MaisonScrollWatch(scrolled: $scrolled))
+        .onDisappear { scrolled = false }
         .scrollIndicators(.never)
         .background(DustField(reduceMotion: reduceMotion, intensity: 0.45))
         .onAppear {
@@ -262,16 +290,22 @@ struct SectionTitle: View {
 }
 
 /// Arrivée en douceur, décalée selon la position (l'accueil se construit sous les yeux).
+/// Seulement à la première arrivée (MaisonIntro) : au retour d'une fiche ou en faisant défiler,
+/// tout est déjà en place. Avec Reduce Motion, un simple fondu.
 private struct Appear: ViewModifier {
     let index: Int
-    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = !MaisonIntro.playing
     func body(content: Content) -> some View {
         content
             .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 22)
-            .blur(radius: shown ? 0 : 6)
+            .offset(y: shown || reduceMotion ? 0 : 18)
+            .blur(radius: shown || reduceMotion ? 0 : 4)
             .onAppear {
-                withAnimation(.spring(response: 0.7, dampingFraction: 0.84).delay(0.1 + Double(index) * 0.07)) { shown = true }
+                MaisonIntro.mark()
+                guard !shown else { return }
+                let delay = 0.08 + Double(min(index, 8)) * 0.06
+                withAnimation(reduceMotion ? .easeOut(duration: 0.3).delay(delay) : .spring(response: 0.55, dampingFraction: 0.86).delay(delay)) { shown = true }
             }
     }
 }
@@ -287,6 +321,33 @@ struct StatusHero: View {
     @State private var hop = 0
 
     var body: some View {
+        VStack(spacing: 0) {
+            top
+            // le trait se remplit pendant les téléchargements
+            Rectangle().fill(Theme.line).frame(height: 1)
+                .overlay(alignment: .leading) {
+                    if let p = overall {
+                        GeometryReader { g in
+                            Rectangle().fill(.white.opacity(0.7))
+                                .frame(width: max(8, g.size.width * p))
+                                .animation(.easeOut(duration: 0.25), value: p)
+                        }
+                        .transition(.opacity)
+                    }
+                }
+            MaisonVitals()
+        }
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line))
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: actionKey)
+        .onChange(of: hub.jobs) { old, new in
+            // une installation vient de finir : la mascotte saute
+            if new.values.contains(.done) && !old.values.contains(.done) { hop += 1 }
+        }
+        .onChange(of: hub.updates.count) { _, n in if n > 0 { hop += 1 } }
+    }
+
+    private var top: some View {
         HStack(spacing: 18) {
             Mascot(mood: mood, arms: arms, size: 54, hop: hop)
                 .frame(width: 86, height: 70)
@@ -306,25 +367,6 @@ struct StatusHero: View {
             actions
         }
         .padding(.vertical, 14).padding(.leading, 8).padding(.trailing, 18)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.line))
-        .overlay(alignment: .bottom) {
-            if let p = overall {
-                GeometryReader { g in
-                    Capsule().fill(.white.opacity(0.6))
-                        .frame(width: max(8, g.size.width * p), height: 2)
-                        .animation(.easeOut(duration: 0.25), value: p)
-                }
-                .frame(height: 2)
-                .padding(.horizontal, 18).padding(.bottom, 1)
-                .transition(.opacity)
-            }
-        }
-        .onChange(of: hub.jobs) { old, new in
-            // une installation vient de finir : la mascotte saute
-            if new.values.contains(.done) && !old.values.contains(.done) { hop += 1 }
-        }
-        .onChange(of: hub.updates.count) { _, n in if n > 0 { hop += 1 } }
     }
 
     private var working: [AppEntry] {
@@ -386,10 +428,33 @@ struct StatusHero: View {
         }
         let ups = hub.updates
         if !ups.isEmpty { return ups.map { "\($0.name) \(hub.releases[$0.id]?.version ?? "")" }.joined(separator: " · ") }
-        var parts = ["\(hub.installed.count) app\(hub.installed.count > 1 ? "s" : "") installée\(hub.installed.count > 1 ? "s" : "")"]
-        if !hub.running.isEmpty { parts.append("\(hub.running.count) ouverte\(hub.running.count > 1 ? "s" : "")") }
-        if !hub.autoUpdate.isEmpty { parts.append("\(hub.autoUpdate.count) en mise à jour auto") }
-        return parts.joined(separator: " · ")
+        if let done = justDone { return hub.running.contains(done.id) ? "Relancée dans sa nouvelle version." : "Elle t'attend dans Applications." }
+        if let l = latest { return "Dernière sortie : \(l.entry.name) \(l.release.version), \(MaisonTime.ago(l.date))." }
+        if hub.installed.isEmpty { return "Choisis une app plus bas : je l'installe et je la garde à jour." }
+        return "Je vérifie les nouvelles versions toutes les 6 heures."
+    }
+
+    private var justDone: AppEntry? { hub.entries.first { hub.jobs[$0.id] == .done } }
+
+    /// La dernière version sortie, toutes apps confondues.
+    private var latest: (entry: AppEntry, release: Release, date: Date)? {
+        hub.entries.compactMap { e in hub.releases[e.id].flatMap { r in r.date.map { (e, r, $0) } } }
+            .max { $0.2 < $1.2 }
+    }
+
+    /// Apps publiées mais pas installées.
+    private var installable: [AppEntry] {
+        hub.entries.filter { hub.installed[$0.id] == nil && hub.releases[$0.id]?.zip != nil && hub.jobs[$0.id] == nil }
+    }
+
+    /// Ce qui décide des boutons affichés (pour animer le changement).
+    private var actionKey: String {
+        if !working.isEmpty { return "travail" }
+        if !hub.updates.isEmpty { return "maj" }
+        if justDone != nil { return "fini" }
+        if hub.offline { return "horsligne" }
+        if !installable.isEmpty { return "installer" }
+        return latest == nil ? "rien" : "nouveautes"
     }
 
     private var greeting: String {
@@ -397,19 +462,48 @@ struct StatusHero: View {
         return h < 5 || h >= 18 ? "Bonsoir" : "Bonjour"
     }
 
+    /// Une action utile selon le moment : mettre à jour, ouvrir ce qui vient d'être installé,
+    /// réessayer, installer ce qui manque, ou lire les nouveautés de la dernière sortie.
     @ViewBuilder private var actions: some View {
         let ups = hub.updates
-        if working.isEmpty && !ups.isEmpty {
-            HStack(spacing: 10) {
-                Button("Nouveautés") { hub.changelog = ups.first }
-                    .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
-                Button { hub.updateAll() } label: {
-                    Label(ups.count == 1 ? "Mettre à jour" : "Tout mettre à jour", systemImage: "arrow.down")
+        Group {
+            switch actionKey {
+            case "maj":
+                HStack(spacing: 10) {
+                    Button("Nouveautés") { hub.changelog = ups.first }
+                        .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
+                    Button { hub.updateAll() } label: {
+                        Label(ups.count == 1 ? "Mettre à jour" : "Tout mettre à jour", systemImage: "arrow.down")
+                    }
+                    .buttonStyle(PillStyle())
                 }
-                .buttonStyle(PillStyle())
+            case "fini":
+                if let e = justDone, !hub.running.contains(e.id) {
+                    Button("Ouvrir \(e.name)") { hub.open(e) }.buttonStyle(PillStyle())
+                }
+            case "horsligne":
+                Button { Task { await hub.refresh() } } label: { Label("Réessayer", systemImage: "arrow.clockwise") }
+                    .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
+                    .disabled(hub.checking)
+            case "installer":
+                let list = installable
+                Button {
+                    for e in list { hub.install(e) }
+                } label: {
+                    Label(list.count == 1 ? "Installer \(list[0].name)" : "Installer les \(list.count) apps", systemImage: "arrow.down")
+                }
+                .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
+            case "nouveautes":
+                if let l = latest {
+                    Button("Nouveautés d’\(l.entry.name)") { hub.changelog = l.entry }
+                        .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
+                }
+            default:
+                EmptyView()
             }
-            .transition(.scale(scale: 0.9).combined(with: .opacity))
         }
+        .transition(.scale(scale: 0.94).combined(with: .opacity))
+        .id(actionKey)
     }
 }
 
@@ -417,6 +511,7 @@ struct StatusHero: View {
 
 struct AppCard: View {
     @EnvironmentObject private var hub: Hub
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let entry: AppEntry
     var index = 0
     let open: () -> Void
@@ -435,7 +530,7 @@ struct AppCard: View {
                                 Image(systemName: entry.symbol).font(.system(size: 50, weight: .semibold)).foregroundStyle(.white.opacity(0.3))
                             }
                         }
-                        .scaleEffect(hover ? 1.06 : 1)
+                        .scaleEffect(hover && !reduceMotion ? 1.04 : 1)
                         // l'image glisse un peu à l'opposé du pointeur : effet de profondeur
                         .offset(x: -tilt.y * 1.6, y: tilt.x * 1.2)
                     }
@@ -449,6 +544,13 @@ struct AppCard: View {
                         Badge(text: "Nouvelle version", strong: true)
                     } else if hub.isComingSoon(entry) {
                         Badge(text: "Bientôt")
+                    } else if fresh {
+                        // version sortie il y a moins de 3 jours, déjà installée : ses nouveautés en un clic
+                        Button { hub.changelog = entry } label: {
+                            Label("Nouveautés", systemImage: "sparkles").labelStyle(BadgeLabel())
+                        }
+                        .buttonStyle(MaisonPress())
+                        .help("Ce qui change dans la \(hub.releases[entry.id]?.version ?? "")")
                     } else if hub.autoUpdate.contains(entry.id) {
                         Badge(text: "Auto")
                     }
@@ -462,11 +564,12 @@ struct AppCard: View {
                 AppIcon(entry: entry, size: 56)
                     .offset(y: -18)
                     .padding(.bottom, -18)
-                    .scaleEffect(hover ? 1.06 : 1, anchor: .bottom)
+                    .scaleEffect(hover && !reduceMotion ? 1.05 : 1, anchor: .bottom)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(entry.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.cream)
-                    Text(entry.tagline).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // deux lignes réservées : les cartes d'une même rangée gardent la même hauteur
+                    Text(entry.tagline).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(2, reservesSpace: true)
                 }
                 Spacer(minLength: 8)
                 ActionButton(entry: entry)
@@ -494,8 +597,8 @@ struct AppCard: View {
         .background(GeometryReader { g in Color.clear.onAppear { size = g.size }.onChange(of: g.size) { _, s in size = s } })
         .rotation3DEffect(.degrees(tilt.x), axis: (x: 1, y: 0, z: 0), perspective: 0.5)
         .rotation3DEffect(.degrees(tilt.y), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
-        .shadow(color: .black.opacity(hover ? 0.55 : 0.3), radius: hover ? 26 : 14, y: hover ? 16 : 8)
-        .offset(y: hover ? -4 : 0)
+        .shadow(color: .black.opacity(hover ? 0.5 : 0.3), radius: hover ? 24 : 14, y: hover ? 14 : 8)
+        .offset(y: hover && !reduceMotion ? -3 : 0)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture(perform: open)
         .onContinuousHover { phase in
@@ -507,14 +610,21 @@ struct AppCard: View {
             }
         }
         .contextMenu { AppMenu(entry: entry, open: open) }
-        .appear(index + 1)
+        .appear(index + 3)
     }
 
-    /// Inclinaison (degrés) selon la position du pointeur : 5° au bord.
+    /// Version installée sortie il y a moins de 3 jours.
+    private var fresh: Bool {
+        guard let i = hub.installed[entry.id], let r = hub.releases[entry.id], let d = r.date,
+              !Version.isNewer(r.version, than: i.version) else { return false }
+        return Date().timeIntervalSince(d) < 3 * 86400
+    }
+
+    /// Inclinaison (degrés) selon la position du pointeur : 3° au bord (rien avec Reduce Motion).
     private var tilt: (x: Double, y: Double) {
-        guard let p = pointer, size.width > 0 else { return (0, 0) }
+        guard !reduceMotion, let p = pointer, size.width > 0 else { return (0, 0) }
         let nx = (p.x / size.width) * 2 - 1, ny = (p.y / size.height) * 2 - 1
-        return (-ny * 4, nx * 5)
+        return (-ny * 2.5, nx * 3)
     }
 }
 
@@ -561,6 +671,22 @@ struct Badge: View {
             .foregroundStyle(strong ? .black : .white.opacity(0.85))
             .padding(.horizontal, 8).padding(.vertical, 4)
             .background(strong ? AnyShapeStyle(.white.opacity(0.9)) : AnyShapeStyle(.black.opacity(0.45)), in: Capsule())
+    }
+}
+
+/// Le style des badges de carte, pour un Label (icône + texte).
+struct BadgeLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon.font(.system(size: 9, weight: .bold))
+            configuration.title
+        }
+        .font(.system(size: 10.5, weight: .bold))
+        .foregroundStyle(.white.opacity(0.9))
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(.black.opacity(0.5), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.14)))
+        .contentShape(Capsule())
     }
 }
 

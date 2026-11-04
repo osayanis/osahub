@@ -4,84 +4,67 @@ import SwiftUI
 // rapide (⌘1…⌘9), le journal des dernières versions et les astuces. Sobre comme OsaWallpaper :
 // blanc à différentes opacités, la couleur seulement pour un état.
 
-// MARK: - Chiffres
+// MARK: - Chiffres (sous le bandeau, dans la même carte)
 
-struct MaisonStats: View {
+/// Quatre chiffres en ligne, sous le bandeau : le bandeau dit l'état du moment, eux disent la
+/// suite en un coup d'œil. Ils montent depuis zéro à la première arrivée, puis suivent sans bruit.
+struct MaisonVitals: View {
     @EnvironmentObject private var hub: Hub
-    @State private var counted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var counted = !MaisonIntro.playing
 
     var body: some View {
-        HStack(spacing: 12) {
-            tile("square.grid.2x2.fill", value: counted ? hub.installed.count : 0, suffix: "/\(hub.entries.count)", label: "apps installées")
-            tile("circle.circle.fill", value: counted ? hub.running.count : 0, label: hub.running.count > 1 ? "ouvertes en ce moment" : "ouverte en ce moment", live: !hub.running.isEmpty)
-            tile("arrow.triangle.2.circlepath", value: counted ? hub.autoUpdate.count : 0, label: "en mise à jour auto")
-            latest
+        let installed = hub.installed.count
+        let upToDate = hub.entries.filter { hub.installed[$0.id] != nil && !hub.hasUpdate($0) }.count
+        let auto = hub.autoUpdate.filter { hub.installed[$0] != nil }.count
+        HStack(spacing: 0) {
+            cell(installed, of: hub.entries.count, label: installed > 1 ? "installées" : "installée")
+            divider
+            cell(hub.running.count, label: hub.running.count > 1 ? "ouvertes" : "ouverte", live: !hub.running.isEmpty)
+            divider
+            cell(upToDate, of: installed, label: "à jour", dim: installed == 0)
+            divider
+            cell(auto, of: installed, label: "en mise à jour auto", dim: installed == 0)
         }
+        .frame(height: 46)
         .onAppear {
-            // les chiffres montent depuis zéro, une fois
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                withAnimation(.spring(response: 0.8, dampingFraction: 0.9)) { counted = true }
+            guard !counted else { return }
+            if reduceMotion { counted = true; return }
+            // les chiffres montent depuis zéro, une fois par lancement
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                withAnimation(.spring(response: 0.9, dampingFraction: 0.92)) { counted = true }
             }
         }
     }
 
-    private func tile(_ symbol: String, value: Int, suffix: String = "", label: String, live: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Image(systemName: symbol).font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.faint)
-                Spacer()
-                if live {
-                    Circle().fill(Theme.ok).frame(width: 6, height: 6)
-                        .modifier(MaisonPulse())
-                }
-            }
+    private var divider: some View {
+        Rectangle().fill(Theme.line).frame(width: 1, height: 18)
+    }
+
+    private func cell(_ n: Int, of total: Int? = nil, label: String, live: Bool = false, dim: Bool = false) -> some View {
+        let v = counted ? n : 0
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text("\(value)").font(.system(size: 30, weight: .bold).monospacedDigit())
-                    .contentTransition(.numericText(value: Double(value)))
-                Text(suffix).font(.system(size: 15, weight: .bold).monospacedDigit()).foregroundStyle(Theme.faint)
-            }
-            .foregroundStyle(Theme.cream)
-            Text(label).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.dim).lineLimit(1)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .maisonCard()
-    }
-
-    /// La dernière version sortie, toutes apps confondues.
-    private var latest: some View {
-        let last = hub.entries.compactMap { e in hub.releases[e.id].flatMap { r in r.date.map { (e, r, $0) } } }
-            .max { $0.2 < $1.2 }
-        return Button {
-            if let l = last { hub.changelog = l.0 }
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Image(systemName: "sparkles").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.faint)
-                    Spacer()
-                    Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.faint)
-                }
-                if let l = last {
-                    HStack(spacing: 8) {
-                        AppIcon(entry: l.0, size: 30)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(l.0.name).font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.cream).lineLimit(1)
-                            Text(l.1.version).font(.system(size: 11.5, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.dim)
-                        }
-                    }
-                    .frame(height: 36)
-                    Text("dernière sortie · \(MaisonTime.ago(l.2))").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.dim).lineLimit(1)
-                } else {
-                    Text("—").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.faint)
-                    Text("dernière sortie").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.dim)
+                Text("\(v)")
+                    .font(.system(size: 17, weight: .bold).monospacedDigit())
+                    .foregroundStyle(dim ? Theme.faint : Theme.cream)
+                    .contentTransition(reduceMotion ? .opacity : .numericText(value: Double(v)))
+                    .animation(.snappy(duration: 0.3), value: v)
+                if let total {
+                    Text("/\(total)")
+                        .font(.system(size: 12, weight: .bold).monospacedDigit())
+                        .foregroundStyle(Theme.faint)
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .maisonCard()
+            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.dim).lineLimit(1)
+            if live {
+                Circle().fill(Theme.ok).frame(width: 6, height: 6)
+                    .modifier(MaisonPulse())
+                    .alignmentGuide(.firstTextBaseline) { d in d[.bottom] + 1 }
+                    .transition(.opacity)
+            }
         }
-        .buttonStyle(MaisonPress())
-        .help("Voir les nouveautés")
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -95,11 +78,11 @@ struct MaisonLauncher: View {
         if !apps.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 SectionTitle(title: "Lancement rapide", detail: "⌘1 à ⌘\(min(apps.count, 9)) depuis cette fenêtre")
-                HStack(spacing: 12) {
+                // jusqu'à 4 par rangée, toutes de la même largeur
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: min(apps.count, 4)), spacing: 12) {
                     ForEach(Array(apps.prefix(9).enumerated()), id: \.element.id) { i, e in
                         MaisonLaunchTile(entry: e, shortcut: i + 1, running: hub.running.contains(e.id)) { hub.open(e) }
                     }
-                    Spacer(minLength: 0)
                 }
             }
         }
@@ -111,12 +94,13 @@ private struct MaisonLaunchTile: View {
     let shortcut: Int
     let running: Bool
     let open: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hover = false
     @State private var bounce = 0
 
     var body: some View {
         Button {
-            bounce += 1
+            if !reduceMotion { bounce += 1 }
             open()
         } label: {
             HStack(spacing: 10) {
@@ -131,7 +115,8 @@ private struct MaisonLaunchTile: View {
                     Text(entry.name).font(.system(size: 12.5, weight: .bold)).foregroundStyle(Theme.cream).lineLimit(1)
                     HStack(spacing: 5) {
                         if running {
-                            Circle().fill(Theme.ok).frame(width: 5, height: 5).modifier(MaisonPulse())
+                            // statique : le bandeau a déjà son point qui respire
+                            Circle().fill(Theme.ok).frame(width: 5, height: 5)
                             Text("ouverte")
                         } else {
                             Text("ouvrir")
@@ -140,17 +125,18 @@ private struct MaisonLaunchTile: View {
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(Theme.faint)
                 }
+                Spacer(minLength: 6)
                 Text("⌘\(shortcut)")
                     .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Theme.faint)
                     .padding(.horizontal, 6).padding(.vertical, 3)
                     .background(Theme.surfaceHi, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .padding(.leading, 4)
+                    .opacity(hover ? 1 : 0.8)
             }
             .padding(.leading, 8).padding(.trailing, 10).padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(hover ? Theme.surfaceHi : Theme.surface))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(hover ? 0.16 : 0.08)))
-            .offset(y: hover ? -2 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(MaisonPress())
         .keyboardShortcut(KeyEquivalent(Character("\(shortcut)")), modifiers: .command)
@@ -180,12 +166,15 @@ struct MaisonJournal: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 }
                 ForEach(Array(items.enumerated()), id: \.element.0.id) { i, item in
-                    MaisonJournalRow(entry: item.0, release: item.1, first: i == 0, last: i == items.count - 1) {
+                    MaisonJournalRow(entry: item.0, release: item.1, first: i == 0, last: i == items.count - 1,
+                                     pending: hub.hasUpdate(item.0)) {
                         hub.changelog = item.0
                     }
                 }
+                Spacer(minLength: 0)
             }
             .padding(.vertical, 8)
+            .frame(maxHeight: .infinity, alignment: .top)
             .maisonCard()
         }
     }
@@ -196,6 +185,8 @@ private struct MaisonJournalRow: View {
     let release: Release
     let first: Bool
     let last: Bool
+    /// Version pas encore installée sur ce Mac.
+    let pending: Bool
     let open: () -> Void
     @State private var hover = false
 
@@ -208,7 +199,8 @@ private struct MaisonJournalRow: View {
                 VStack(spacing: 0) {
                     Rectangle().fill(first ? .clear : Theme.line).frame(width: 1, height: 14)
                     ZStack {
-                        if fresh { Circle().fill(.white).frame(width: 9, height: 9).modifier(MaisonPulse(scale: 2.4)) }
+                        // seule la toute dernière sortie respire ; les autres récentes restent pleines
+                        if fresh && first { Circle().fill(.white).frame(width: 9, height: 9).modifier(MaisonPulse(scale: 2.4)) }
                         Circle().fill(fresh ? Theme.cream : .white.opacity(0.3)).frame(width: 9, height: 9)
                     }
                     Rectangle().fill(last ? .clear : Theme.line).frame(width: 1).frame(maxHeight: .infinity)
@@ -219,10 +211,11 @@ private struct MaisonJournalRow: View {
                     HStack(spacing: 6) {
                         Text(entry.name).font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.cream)
                         Text(release.version).font(.system(size: 12, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.dim)
-                        if fresh {
-                            Text("Nouveau").font(.system(size: 9.5, weight: .heavy)).foregroundStyle(Theme.ink)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Theme.cream, in: Capsule())
+                        if pending {
+                            Text("pas encore installée").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.cream)
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(Theme.surfaceHi, in: Capsule())
+                                .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
                         }
                     }
                     Text(Notes.summary(release.notes) ?? release.title)
@@ -282,14 +275,16 @@ struct MaisonTips: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             SectionTitle(title: "Astuces", detail: "\(index + 1) sur \(tips.count)")
+                .contentTransition(.numericText())
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
                     card(tips[index])
                         .id(index)
                         .transition(transition)
                 }
-                .frame(maxWidth: .infinity, minHeight: 168, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
                 .clipped()
+                Spacer(minLength: 12)
                 HStack(spacing: 6) {
                     ForEach(0..<tips.count, id: \.self) { i in
                         Capsule().fill(.white.opacity(i == index ? 0.85 : 0.2))
@@ -302,9 +297,9 @@ struct MaisonTips: View {
                     arrow("chevron.right") { go(index + 1) }
                 }
                 .animation(.spring(response: 0.35, dampingFraction: 0.8), value: index)
-                .padding(.top, 12)
             }
             .padding(18)
+            .frame(maxHeight: .infinity, alignment: .top)
             .maisonCard()
             .onHover { hover = $0 }
         }
@@ -362,6 +357,41 @@ struct MaisonTips: View {
 }
 
 // MARK: - Outils
+
+/// La première arrivée sur l'accueil (une fois par lancement) se construit sous les yeux ;
+/// au retour d'une fiche, tout est déjà là : fréquent = rapide.
+@MainActor enum MaisonIntro {
+    private static var start: Date?
+    /// Vrai pendant la première seconde et demie d'accueil.
+    static var playing: Bool { start.map { Date().timeIntervalSince($0) < 1.5 } ?? true }
+    static func mark() { if start == nil { start = Date() } }
+}
+
+/// L'accueil a-t-il défilé ? macOS 15+ : la géométrie du défilement ; macOS 14 : la position
+/// du contenu remontée par MaisonScrollKey.
+struct MaisonScrollWatch: ViewModifier {
+    @Binding var scrolled: Bool
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.y + g.contentInsets.top > 4
+            } action: { _, s in
+                if s != scrolled { scrolled = s }
+            }
+        } else {
+            content.onPreferenceChange(MaisonScrollKey.self) { y in
+                let s = y < -4
+                if s != scrolled { scrolled = s }
+            }
+        }
+    }
+}
+
+/// Position du contenu de l'accueil (pour la barre du haut, macOS 14).
+struct MaisonScrollKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
 
 enum MaisonTime {
     static func ago(_ d: Date) -> String {
