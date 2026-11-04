@@ -143,16 +143,27 @@ struct AppIcon: View {
     }
 }
 
-/// Défilement de captures : flèches au survol, points, avance seule toutes les 5 s.
+/// Défilement de captures : fondu flouté d'une capture à l'autre, flèches au survol, points dont
+/// le remplissage montre l'avance automatique (toutes les 5 s, en pause au survol). Clic : plein cadre.
 struct Carousel: View {
     let urls: [URL]
     var accent: Color = .white
     var symbol = "photo"
     var corner: CGFloat = 20
+    /// Capture affichée, pilotée de l'extérieur (clavier, plein cadre) ; sinon gardée ici.
+    var selection: Binding<Int>? = nil
+    /// Clic sur la capture : l'ouvrir en grand.
+    var onOpen: ((Int) -> Void)? = nil
 
-    @State private var index = 0
-    @State private var forward = true
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var own = 0
     @State private var hover = false
+    @State private var fill: CGFloat = 0
+
+    private var index: Int {
+        guard !urls.isEmpty else { return 0 }
+        return min(max(0, selection?.wrappedValue ?? own), urls.count - 1)
+    }
 
     var body: some View {
         ZStack {
@@ -163,27 +174,40 @@ struct Carousel: View {
                     Text("Captures bientôt").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.35))
                 }
             } else {
-                ForEach(urls.indices, id: \.self) { i in
-                    if i == index { slide(urls[i]).transition(slideTransition) }
+                ZStack {
+                    ForEach(urls.indices, id: \.self) { i in
+                        if i == index {
+                            slide(urls[i])
+                                .transition(.asymmetric(insertion: .ficheBlur(scale: reduce ? 1 : 1.015),
+                                                        removal: .ficheBlur(scale: reduce ? 1 : 0.99)))
+                        }
+                    }
                 }
+                .animation(reduce ? .easeOut(duration: 0.2) : .easeOut(duration: 0.38), value: index)
+                .contentShape(Rectangle())
+                .onTapGesture { onOpen?(index) }
                 if urls.count > 1 { controls }
+                if onOpen != nil { expandHint }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(Theme.line))
-        .onHover { hover = $0 }
-        .task(id: urls) {
-            index = 0
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                if !hover, urls.count > 1 { go(1) }
-            }
+        .onHover { h in withAnimation(.easeOut(duration: 0.18)) { hover = h } }
+        .onChange(of: urls) { _, _ in set(0) }
+        // L'avance automatique repart à chaque capture ; en pause au survol. Pas d'avance
+        // automatique avec « Réduire les animations ».
+        .task(id: "\(index)-\(hover)-\(urls.count)") {
+            guard urls.count > 1, !reduce else { return }
+            if hover { withAnimation(.easeOut(duration: 0.2)) { fill = 1 }; return }
+            fill = 0
+            withAnimation(.linear(duration: 5)) { fill = 1 }
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled { go(1) }
         }
     }
 
-    private var slideTransition: AnyTransition {
-        .asymmetric(insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
-                    removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity))
+    private func set(_ i: Int) {
+        if let selection { selection.wrappedValue = i } else { own = i }
     }
 
     private func slide(_ url: URL) -> some View {
@@ -198,8 +222,29 @@ struct Carousel: View {
                 RemoteImage(url: url, mode: .fit) { ProgressView().controlSize(.small) }
                     .padding(14)
                     .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
+                    .scaleEffect(hover && onOpen != nil && !reduce ? 1.012 : 1)
+                    .animation(.easeOut(duration: 0.3), value: hover)
             }
             .clipped()
+    }
+
+    private var expandHint: some View {
+        VStack {
+            HStack {
+                Spacer()
+                Label("Agrandir", systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.cream)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.black.opacity(0.5), in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.12)))
+                    .opacity(hover ? 1 : 0)
+                    .offset(y: hover || reduce ? 0 : -4)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .allowsHitTesting(false)
     }
 
     private var controls: some View {
@@ -207,19 +252,31 @@ struct Carousel: View {
             Spacer()
             HStack(spacing: 7) {
                 ForEach(urls.indices, id: \.self) { i in
-                    Capsule().fill(i == index ? Theme.cream : .white.opacity(0.3))
-                        .frame(width: i == index ? 18 : 6, height: 6)
-                        .onTapGesture { forward = i > index; withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { index = i } }
+                    dot(i)
+                        .contentShape(Rectangle().inset(by: -4))
+                        .onTapGesture { set(i) }
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(.black.opacity(0.35), in: Capsule())
+            .background(.black.opacity(0.4), in: Capsule())
             .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .leading) { arrow("chevron.left") { go(-1) } }
         .overlay(alignment: .trailing) { arrow("chevron.right") { go(1) } }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: index)
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: index)
+    }
+
+    private func dot(_ i: Int) -> some View {
+        let active = i == index
+        return Capsule().fill(.white.opacity(active ? 0.3 : 0.28))
+            .frame(width: active ? 22 : 6, height: 6)
+            .overlay(alignment: .leading) {
+                if active {
+                    Capsule().fill(Theme.cream)
+                        .frame(width: urls.count > 1 && !reduce ? max(6, 22 * fill) : 22)
+                }
+            }
     }
 
     private func arrow(_ name: String, action: @escaping () -> Void) -> some View {
@@ -230,16 +287,14 @@ struct Carousel: View {
                 .background(.black.opacity(0.45), in: Circle())
                 .overlay(Circle().strokeBorder(.white.opacity(0.15)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FichePress(scale: 0.92))
         .padding(.horizontal, 14)
         .opacity(hover ? 1 : 0)
-        .animation(.easeOut(duration: 0.2), value: hover)
+        .offset(x: hover || reduce ? 0 : (name == "chevron.left" ? -6 : 6))
     }
 
     private func go(_ d: Int) {
-        forward = d > 0
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.86)) {
-            index = (index + d + urls.count) % urls.count
-        }
+        guard !urls.isEmpty else { return }
+        set((index + d + urls.count) % urls.count)
     }
 }

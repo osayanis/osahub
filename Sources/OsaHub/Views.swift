@@ -36,7 +36,9 @@ struct StatusLine: View {
     }
 }
 
-/// Installer / Mettre à jour / Ouvrir, avec l'avancement.
+
+/// Installer / Mettre à jour / Ouvrir, avec l'avancement. Chaque état arrive en fondu flouté ;
+/// la fin d'une installation dessine une coche.
 struct ActionButton: View {
     @EnvironmentObject private var hub: Hub
     let entry: AppEntry
@@ -44,19 +46,21 @@ struct ActionButton: View {
 
     var body: some View {
         let accent = Theme.accent(entry.accent)
-        Group {
+        ZStack {
             switch hub.jobs[entry.id] {
             case .downloading(let p)?:
                 ProgressPill(progress: p, label: "\(Int(p * 100)) %", accent: accent, large: large)
             case .installing?:
                 ProgressPill(progress: nil, label: "Installation…", accent: accent, large: large)
             case .done?:
-                Label("Installée", systemImage: "checkmark")
-                    .font(.system(size: large ? 14 : 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.ok)
-                    .padding(.horizontal, large ? 22 : 14).padding(.vertical, large ? 10 : 7)
-                    .background(Theme.surfaceHi, in: Capsule())
-                    .transition(.scale.combined(with: .opacity))
+                HStack(spacing: 7) {
+                    FicheCheck(size: large ? 17 : 14)
+                    Text("Installée")
+                }
+                .font(.system(size: large ? 14 : 12.5, weight: .semibold))
+                .foregroundStyle(Theme.ok)
+                .padding(.horizontal, large ? 22 : 14).padding(.vertical, large ? 10 : 7)
+                .background(Theme.surfaceHi, in: Capsule())
             case .failed?:
                 Button { hub.install(entry) } label: { Label("Réessayer", systemImage: "arrow.clockwise") }
                     .buttonStyle(PillStyle(fill: Theme.red.opacity(0.9), large: large))
@@ -83,10 +87,25 @@ struct ActionButton: View {
                 }
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hub.jobs[entry.id])
+        .id(phase)
+        .transition(.ficheBlur(scale: 0.96))
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: hub.jobs[entry.id])
+    }
+
+    /// Un nom par état (le pourcentage n'en change pas) : la transition ne joue qu'au changement d'état.
+    private var phase: String {
+        switch hub.jobs[entry.id] {
+        case .downloading?: return "dl"
+        case .installing?: return "inst"
+        case .done?: return "ok"
+        case .failed?: return "err"
+        case nil: return hub.hasUpdate(entry) ? "maj" : hub.installed[entry.id] != nil ? "ouvrir" : "rien"
+        }
     }
 }
 
+/// L'avancement : la barre se remplit avec un ressort, un reflet la traverse tant que ça travaille,
+/// le pourcentage roule.
 struct ProgressPill: View {
     let progress: Double?
     let label: String
@@ -98,15 +117,18 @@ struct ProgressPill: View {
             Capsule().fill(Theme.surfaceHi)
             if let progress {
                 GeometryReader { g in
-                    Capsule().fill(.white.opacity(0.22)).frame(width: max(g.size.height, g.size.width * progress))
-                        .animation(.easeOut(duration: 0.2), value: progress)
+                    Capsule().fill(.white.opacity(0.24))
+                        .overlay(FicheSheen().clipShape(Capsule()))
+                        .frame(width: max(g.size.height, g.size.width * progress))
+                        .animation(.spring(response: 0.45, dampingFraction: 0.9), value: progress)
                 }
             } else {
-                Capsule().fill(.white.opacity(0.12))
+                Capsule().fill(.white.opacity(0.1)).overlay(FicheSheen())
             }
             HStack(spacing: 6) {
                 if progress == nil { ProgressView().controlSize(.mini).tint(Theme.cream) }
                 Text(label).monospacedDigit()
+                    .contentTransition(.numericText(value: progress ?? 0))
             }
             .font(.system(size: large ? 14 : 12.5, weight: .semibold))
             .foregroundStyle(Theme.cream)
@@ -119,243 +141,488 @@ struct ProgressPill: View {
 
 // MARK: - Fiche d'une app
 
+/// La fiche : en-tête (icône en parallaxe), captures (plein cadre au clic, ← →), ce qu'elle fait,
+/// avec quoi elle fonctionne, nouveautés, infos, versions. Les liens vers une autre app de la suite
+/// ouvrent sa fiche ici même ; le bouton retour (ou Échap) revient en arrière.
 struct DetailView: View {
     @EnvironmentObject private var hub: Hub
+    @Environment(\.accessibilityReduceMotion) private var reduce
     let entry: AppEntry
     let back: () -> Void
 
+    /// Fiches ouvertes depuis « Fonctionne avec », la dernière est affichée.
+    @State private var trail: [AppEntry] = []
+    @State private var shot = 0
+    @State private var viewer = false
+    @State private var compact = false
+    @State private var scroll = FicheScroll()
+    /// Captures uniquement (OSAHUB_CHANGELOG) : la feuille des nouveautés ouverte d'ici.
+    @State private var testSheet: AppEntry?
+
+    private var current: AppEntry { trail.last ?? entry }
+
     var body: some View {
-        let accent = Theme.accent(entry.accent)
-        let release = hub.releases[entry.id]
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                Button(action: back) {
-                    Label("Toutes les apps", systemImage: "chevron.left")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .padding(.horizontal, 12).padding(.vertical, 7)
-                        .background(Theme.surface, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
-
-                HStack(alignment: .center, spacing: 22) {
-                    AppIcon(entry: entry, size: 96)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(entry.name).font(.system(size: 30, weight: .bold)).kerning(-0.6).foregroundStyle(Theme.cream)
-                        Text(entry.tagline).font(.system(size: 14)).foregroundStyle(.white.opacity(0.55))
-                        StatusLine(entry: entry).padding(.top, 4)
-                    }
-                    Spacer(minLength: 12)
-                    VStack(alignment: .trailing, spacing: 12) {
-                        HStack(spacing: 8) {
-                            ActionButton(entry: entry, large: true)
-                            Menu {
-                                AppMenu(entry: entry)
-                            } label: {
-                                Image(systemName: "ellipsis").font(.system(size: 14, weight: .bold))
-                                    .frame(width: 42, height: 42)
-                                    .background(Theme.surfaceHi, in: Circle())
+        let app = current
+        let release = hub.releases[app.id]
+        let shots = gallery(app, release)
+        ScrollViewReader { proxy in
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    // « haut » : le tout début du contenu (au-dessus de la marge), pas le bouton retour,
+                    // sinon remonter laissait le bouton caché sous la barre du haut
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: 0).id("haut")
+                        VStack(alignment: .leading, spacing: 0) {
+                            backButton
+                                .padding(.bottom, 30)
+                            // ZStack : l'ancienne fiche et la nouvelle se superposent pendant le fondu
+                            // (empilées, elles doublaient la hauteur et décalaient le défilement)
+                            ZStack(alignment: .top) {
+                                sections(app, release, shots)
+                                    .id(app.id)
+                                    .transition(.ficheBlur(y: 12))
                             }
-                            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-                            .foregroundStyle(Theme.cream)
-                            .fixedSize()
+                            Color.clear.frame(height: 1).id("bas")
                         }
-                        if hub.running.contains(entry.id) {
-                            HStack(spacing: 14) {
-                                RunningBadge()
-                                Button("Quitter") { hub.quitApp(entry) }
-                                Button("Relancer") { hub.relaunchApp(entry) }
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Theme.dim)
-                        }
-                        if hub.installed[entry.id] != nil {
-                            Toggle("Mise à jour automatique", isOn: Binding(get: { hub.autoUpdate.contains(entry.id) }, set: { hub.setAutoUpdate(entry, $0) }))
-                                .toggleStyle(.switch).controlSize(.mini)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Theme.dim)
-                                .help("Quand une nouvelle version sort, OsaHUB l'installe tout seul, si l'app n'est pas ouverte.")
-                        }
+                        .padding(.horizontal, 36)
+                        .padding(.top, 96)
+                        .padding(.bottom, 110)
+                        .frame(maxWidth: 1000)
+                        .frame(maxWidth: .infinity)
+                        // (une préférence lue par onPreferenceChange ne suit pas le défilement sur macOS)
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named("fiche")).minY } action: { track($0) }
                     }
                 }
+                .coordinateSpace(name: "fiche")
+                .scrollIndicators(.never)
 
-                Carousel(urls: gallery(release), accent: accent, symbol: entry.symbol)
-                    .frame(height: 420)
-
-                Text(entry.description)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let release {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text("Nouveautés").font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.cream)
-                            Text("v\(release.version)")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.8))
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(Theme.surfaceHi, in: Capsule())
-                            if let d = release.date {
-                                Text(d.formatted(date: .long, time: .omitted)).font(.system(size: 12.5)).foregroundStyle(Theme.faint)
-                            }
-                            Spacer()
-                            Link(destination: release.page) {
-                                Label("GitHub", systemImage: "arrow.up.right").font(.system(size: 12.5, weight: .semibold))
-                            }
-                            .foregroundStyle(Theme.dim)
-                        }
-                        NotesView(text: release.notes, accent: accent)
+                if compact && !viewer {
+                    FicheDock(entry: app) {
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.9)) { proxy.scrollTo("haut", anchor: .top) }
                     }
-                    .padding(20)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line))
+                    .padding(.bottom, 20)
+                    .transition(reduce ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 }
 
-                VersionHistory(entry: entry)
+                if viewer {
+                    FicheViewer(urls: shots, index: $shot) { closeViewer() }
+                        .transition(.opacity)
+                        .zIndex(5)
+                }
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 96)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1000)
-            .frame(maxWidth: .infinity)
+            .background { keyboard(count: shots.count) }
+            .onAppear { testHooks(proxy) }
+            .onChange(of: entry.id) { _, _ in trail = []; shot = 0; viewer = false }
+            .onChange(of: app.id) { _, _ in
+                hub.loadHistory(current)
+                shot = 0
+                proxy.scrollTo("haut", anchor: .top)
+                // et encore une fois le fondu terminé, si la hauteur a changé entre-temps
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("haut", anchor: .top) }
+            }
         }
-        .scrollIndicators(.never)
-        .onAppear { hub.loadHistory(entry) }
+        .onAppear { hub.loadHistory(app) }
+        .sheet(item: $testSheet) { e in ChangelogSheet(entry: e).environmentObject(hub) }
     }
 
-    private func gallery(_ r: Release?) -> [URL] {
+    @ViewBuilder
+    private func sections(_ app: AppEntry, _ release: Release?, _ shots: [URL]) -> some View {
+        VStack(alignment: .leading, spacing: 40) {
+            FicheHero(entry: app, scroll: scroll)
+
+            Carousel(urls: shots, accent: Theme.accent(app.accent), symbol: app.symbol,
+                     selection: $shot, onOpen: { i in openViewer(i) })
+                .frame(height: 430)
+                .ficheReveal(3)
+
+            VStack(alignment: .leading, spacing: 30) {
+                Text(app.description)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineSpacing(4)
+                    .frame(maxWidth: 660, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                FicheFeatures(entry: app, soon: release?.zip == nil && hub.isComingSoon(app))
+            }
+            .id("points")
+            .ficheReveal(4)
+
+            FicheLinks(entry: app) { openLinked($0) }
+                .id("liens")
+                .ficheReveal(5)
+
+            if let release {
+                FicheReleaseCard(release: release).ficheReveal(6)
+            }
+
+            FicheInfos(entry: app)
+                .id("infos")
+                .ficheReveal(7)
+
+            VersionHistory(entry: app)
+        }
+    }
+
+    private var backButton: some View {
+        Button(action: escape) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold))
+                Text(backLabel).contentTransition(.opacity)
+            }
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.75))
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Theme.surface, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(FichePress())
+        .keyboardShortcut(hub.palette ? nil : KeyboardShortcut(.escape, modifiers: []))
+        .help("Revenir (Échap)")
+    }
+
+    private var backLabel: String {
+        switch trail.count {
+        case 0: return "Toutes les apps"
+        case 1: return entry.name
+        default: return trail[trail.count - 2].name
+        }
+    }
+
+    /// ← → font défiler les captures (dans la fiche comme en plein cadre). Pas quand la recherche
+    /// rapide est ouverte : ses touches sont à elle.
+    @ViewBuilder private func keyboard(count: Int) -> some View {
+        if !hub.palette && count > 1 {
+            ZStack {
+                Button("Capture précédente") { step(-1, count) }.keyboardShortcut(.leftArrow, modifiers: [])
+                Button("Capture suivante") { step(1, count) }.keyboardShortcut(.rightArrow, modifiers: [])
+            }
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func step(_ d: Int, _ count: Int) {
+        shot = ((min(shot, count - 1) + d) % count + count) % count
+    }
+
+    /// Échap : ferme le plein cadre, sinon revient à la fiche précédente, sinon à l'accueil.
+    private func escape() {
+        if viewer { closeViewer(); return }
+        if !trail.isEmpty {
+            withAnimation(FicheMotion.enter(reduce)) { _ = trail.removeLast() }
+            return
+        }
+        back()
+    }
+
+    private func openLinked(_ e: AppEntry) {
+        guard e.id != current.id else { return }
+        withAnimation(FicheMotion.enter(reduce)) {
+            if let i = trail.firstIndex(where: { $0.id == e.id }) {
+                trail.removeSubrange((i + 1)...)
+            } else if e.id == entry.id {
+                trail = []
+            } else {
+                trail.append(e)
+            }
+        }
+    }
+
+    private func openViewer(_ i: Int) {
+        shot = i
+        withAnimation(.easeOut(duration: reduce ? 0.18 : 0.25)) { viewer = true }
+    }
+
+    private func closeViewer() {
+        withAnimation(.easeOut(duration: 0.18)) { viewer = false }
+    }
+
+    private func track(_ y: CGFloat) {
+        scroll.y = y
+        if scroll.rest == nil { scroll.rest = y }
+        let c = scroll.scrolled > 200
+        if c != compact { withAnimation(FicheMotion.state(reduce)) { compact = c } }
+    }
+
+    private func gallery(_ app: AppEntry, _ r: Release?) -> [URL] {
         var seen = Set<URL>()
-        return ((r?.images ?? []) + entry.screenshots).filter { seen.insert($0).inserted }
+        return ((r?.images ?? []) + app.screenshots).filter { seen.insert($0).inserted }
+    }
+
+    /// Variables d'environnement des captures (instance de test) : rien n'est installé ni enregistré.
+    ///   OSAHUB_FICHE_SCROLL=points|liens|infos|bas   descend dans la fiche
+    ///   OSAHUB_VIEWER=<n>                     ouvre la capture n en plein cadre
+    ///   OSAHUB_CHANGELOG=<id>                 ouvre la feuille des nouveautés de cette app
+    ///   OSAHUB_FICHE_LIEN=<id>                suit le lien « Fonctionne avec » vers cette app
+    ///   OSAHUB_DEMO_JOB=0.42|installation|fini  montre un avancement (en mémoire seulement)
+    private func testHooks(_ proxy: ScrollViewProxy) {
+        let env = ProcessInfo.processInfo.environment
+        if let id = env["OSAHUB_FICHE_LIEN"], let e = hub.entries.first(where: { $0.id == id }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { openLinked(e) }
+        }
+        if let where_ = env["OSAHUB_FICHE_SCROLL"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                proxy.scrollTo(where_, anchor: where_ == "bas" ? .bottom : .top)
+            }
+        }
+        if let n = env["OSAHUB_VIEWER"].flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { openViewer(n) }
+        }
+        if let id = env["OSAHUB_CHANGELOG"], let e = hub.entries.first(where: { $0.id == id }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { testSheet = e }
+        }
+        if let job = env["OSAHUB_DEMO_JOB"] {
+            let id = env["OSAHUB_FICHE_LIEN"] ?? env["OSAHUB_CHANGELOG"] ?? current.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                switch job {
+                case "installation": hub.jobs[id] = .installing
+                case "fini": hub.jobs[id] = .done
+                default: hub.jobs[id] = .downloading(Double(job) ?? 0.42)
+                }
+            }
+        }
     }
 }
 
 // MARK: - Historique des versions
 
+/// Les versions précédentes en frise : un point par version (vert pour celle installée),
+/// les notes se déplient sous la ligne.
 struct VersionHistory: View {
     @EnvironmentObject private var hub: Hub
+    @Environment(\.accessibilityReduceMotion) private var reduce
     let entry: AppEntry
     @State private var open: String?
+    @State private var all = false
+    private let first = 5
 
     var body: some View {
         let list = (hub.history[entry.id] ?? []).filter { $0.version != hub.releases[entry.id]?.version }
         if !list.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionTitle(title: "Versions précédentes", detail: "pour revenir en arrière si une mise à jour te gêne")
+            let visible = all ? list : Array(list.prefix(first))
+            VStack(alignment: .leading, spacing: 14) {
+                FicheSectionTitle(title: "Versions précédentes", detail: "pour revenir en arrière si une mise à jour te gêne")
                 VStack(spacing: 0) {
-                    ForEach(Array(list.enumerated()), id: \.element.version) { i, r in
-                        if i > 0 { Rectangle().fill(Theme.line).frame(height: 1) }
-                        row(r)
+                    ForEach(Array(visible.enumerated()), id: \.element.version) { i, r in
+                        FicheHistoryRow(entry: entry, release: r, expanded: open == r.version,
+                                        lineAbove: i > 0, lineBelow: i < visible.count - 1 || list.count > visible.count) {
+                            withAnimation(FicheMotion.state(reduce)) { open = open == r.version ? nil : r.version }
+                        }
+                        .modifier(FicheRowIn(index: i))
                     }
                 }
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.line))
-            }
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
-        }
-    }
 
-    private func row(_ r: Release) -> some View {
-        let expanded = open == r.version
-        let current = hub.installed[entry.id]?.version == r.version
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.faint)
-                    .rotationEffect(.degrees(expanded ? 90 : 0))
-                Text("v\(r.version)").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surfaceHi, in: Capsule())
-                Text(Notes.summary(r.notes) ?? r.title).font(.system(size: 12.5)).foregroundStyle(Theme.dim).lineLimit(1)
-                Spacer(minLength: 8)
-                if let d = r.date { Text(d.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 11.5)).foregroundStyle(Theme.faint) }
-                if current {
-                    Text("installée").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.ok)
-                } else if r.zip != nil && hub.jobs[entry.id] == nil {
-                    Button("Installer") { hub.install(entry, version: r) }
-                        .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
-                        .help("Remplace la version installée par la \(r.version)")
+                if list.count > first {
+                    Button {
+                        withAnimation(FicheMotion.state(reduce)) { all.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(all ? "Voir moins" : "Voir les \(list.count - first) autres")
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold))
+                                .rotationEffect(.degrees(all ? 180 : 0))
+                        }
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.dim)
+                        .padding(.leading, 40)
+                    }
+                    .buttonStyle(FichePress())
                 }
             }
+            .transition(.opacity)
+        }
+    }
+}
+
+/// Le fil de la frise dans une ligne : au-dessus et/ou au-dessous du point.
+private struct FicheRailLine: Shape {
+    let above: Bool
+    let below: Bool
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        let x = FicheHistoryRow.dotX, y = FicheHistoryRow.dotY
+        if above { p.addRect(CGRect(x: x - 0.5, y: r.minY, width: 1, height: y - 7)) }
+        if below { p.addRect(CGRect(x: x - 0.5, y: y + 7, width: 1, height: max(0, r.maxY - y - 7))) }
+        return p
+    }
+}
+
+private struct FicheRowIn: ViewModifier {
+    let index: Int
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var shown = false
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown || reduce ? 0 : 8)
+            .onAppear { withAnimation(FicheMotion.enter(reduce, delay: Double(min(index, 8)) * 0.04)) { shown = true } }
+    }
+}
+
+private struct FicheHistoryRow: View {
+    @EnvironmentObject private var hub: Hub
+    let entry: AppEntry
+    let release: Release
+    let expanded: Bool
+    let lineAbove: Bool
+    let lineBelow: Bool
+    /// Centre du point dans la ligne.
+    static let dotX: CGFloat = 11
+    static let dotY: CGFloat = 26.5
+    let toggle: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        let current = hub.installed[entry.id]?.version == release.version
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                FicheVersionChip(version: release.version)
+                Text(Notes.summary(release.notes) ?? release.title)
+                    .font(.system(size: 12.5)).foregroundStyle(Theme.dim).lineLimit(1)
+                Spacer(minLength: 8)
+                if let d = release.date {
+                    Text(d.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(Theme.faint)
+                }
+                if current {
+                    Text("installée").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.ok)
+                } else if release.zip != nil && hub.jobs[entry.id] == nil {
+                    // au survol seulement : la liste reste calme
+                    Button("Installer") { hub.install(entry, version: release) }
+                        .buttonStyle(PillStyle(fill: Theme.surfaceHi, text: Theme.cream))
+                        .help("Remplace la version installée par la \(release.version)")
+                        .opacity(hover || expanded ? 1 : 0)
+                        .allowsHitTesting(hover || expanded)
+                }
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.faint)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+            .frame(minHeight: 31)
             .contentShape(Rectangle())
-            .onTapGesture { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { open = expanded ? nil : r.version } }
+            .onTapGesture(perform: toggle)
             if expanded {
-                NotesView(text: r.notes, accent: Theme.cream)
-                    .padding(.leading, 22)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                NotesView(text: release.notes, accent: Theme.cream)
+                    .padding(.bottom, 4)
+                    .transition(.ficheBlur(y: -6))
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, 14).padding(.vertical, 11)
+        .background((hover || expanded) ? Theme.surface : .clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.leading, 28)
+        .background(alignment: .topLeading) { rail(current) }
+        .background { FicheRailLine(above: lineAbove, below: lineBelow).fill(Theme.line) }
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+    }
+
+    /// Le point de la version sur le fil.
+    private func rail(_ current: Bool) -> some View {
+        ZStack {
+            if current {
+                Circle().stroke(Theme.ok.opacity(0.35), lineWidth: 1).frame(width: 15, height: 15)
+                Circle().fill(Theme.ok).frame(width: 7, height: 7)
+            } else {
+                Circle().fill(expanded ? Theme.cream : Theme.bg).frame(width: 9, height: 9)
+                Circle().strokeBorder(.white.opacity(expanded ? 0.9 : 0.3), lineWidth: 1.5).frame(width: 9, height: 9)
+            }
+        }
+        .frame(width: 15, height: 15)
+        .padding(.leading, Self.dotX - 7.5)
+        .padding(.top, Self.dotY - 7.5)
     }
 }
 
 // MARK: - Nouveautés d'une mise à jour
 
+/// La feuille des nouveautés : captures, l'app qui arrive, le saut de version, les notes en décalé.
 struct ChangelogSheet: View {
     @EnvironmentObject private var hub: Hub
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduce
     let entry: AppEntry
+    @State private var shown = false
 
     var body: some View {
         let accent = Theme.accent(entry.accent)
         let release = hub.releases[entry.id]
         VStack(spacing: 0) {
             Carousel(urls: images(release), accent: accent, symbol: entry.symbol, corner: 0)
-                .frame(height: 320)
+                .frame(height: 300)
                 .overlay(alignment: .bottom) {
-                    LinearGradient(colors: [.clear, Theme.bg], startPoint: .top, endPoint: .bottom).frame(height: 70)
+                    LinearGradient(colors: [.clear, Theme.bg], startPoint: .top, endPoint: .bottom).frame(height: 80)
                         .allowsHitTesting(false)
                 }
 
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .center, spacing: 16) {
-                    AppIcon(entry: entry, size: 64)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("NOUVELLE VERSION")
-                                .font(.system(size: 10.5, weight: .bold))
-                            .tracking(1.6)
-                            .foregroundStyle(.white.opacity(0.4))
-                        Text("\(entry.name) \(release?.version ?? "")").font(.system(size: 22, weight: .bold)).foregroundStyle(Theme.cream)
-                        if let i = hub.installed[entry.id] {
-                            Text("Tu as la \(i.version)\(release?.date.map { " · publiée le \($0.formatted(date: .abbreviated, time: .omitted))" } ?? "")")
-                                .font(.system(size: 12.5)).foregroundStyle(Theme.faint)
-                        }
+                    AppIcon(entry: entry, size: 68)
+                        .scaleEffect(shown || reduce ? 1 : 0.82)
+                        .blur(radius: shown || reduce ? 0 : 8)
+                        .opacity(shown ? 1 : 0)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("\(entry.name) \(release?.version ?? "")")
+                            .font(.system(size: 24, weight: .bold)).kerning(-0.5)
+                            .foregroundStyle(Theme.cream)
+                        jump(release)
                     }
+                    .opacity(shown ? 1 : 0)
+                    .offset(x: shown || reduce ? 0 : -10)
                     Spacer()
                 }
 
                 ScrollView {
-                    NotesView(text: release?.notes ?? "", accent: accent)
+                    FicheNotes(text: release?.notes ?? "", startDelay: 0.3)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 6)
                 }
-                .frame(maxHeight: 230)
+                .frame(maxHeight: 220)
                 .scrollIndicators(.automatic)
 
-                HStack {
-                    Button("Plus tard") { close() }
+                HStack(spacing: 12) {
+                    Button("Plus tard") { dismiss() }
                         .buttonStyle(.plain)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.75))
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .background(Theme.surfaceHi, in: Capsule())
                         .keyboardShortcut(.cancelAction)
+                    if let page = release?.page {
+                        Link(destination: page) {
+                            Label("Sur GitHub", systemImage: "arrow.up.right").font(.system(size: 12.5, weight: .semibold))
+                        }
+                        .foregroundStyle(Theme.dim)
+                    }
                     Spacer()
                     ActionButton(entry: entry, large: true)
                 }
             }
             .padding(.horizontal, 28)
-            .padding(.top, 6)
+            .padding(.top, 4)
             .padding(.bottom, 24)
         }
         .frame(width: 660)
         .background(Theme.bg)
         .preferredColorScheme(.dark)
-        .onDisappear { hub.changelogClosed(entry) }
+        .onAppear {
+            withAnimation(reduce ? .easeOut(duration: 0.2) : .spring(response: 0.6, dampingFraction: 0.8).delay(0.12)) { shown = true }
+        }
+        .onDisappear {
+            // ouverte pour une capture (OSAHUB_CHANGELOG) : cette version n'est pas marquée vue
+            if ProcessInfo.processInfo.environment["OSAHUB_CHANGELOG"] == nil { hub.changelogClosed(entry) }
+        }
     }
 
-    private func close() {
-        dismiss()
+    /// « 1.2 → 1.3 · 4 nouveautés · publiée le … »
+    @ViewBuilder private func jump(_ r: Release?) -> some View {
+        let count = Notes.blocks(r?.notes ?? "").filter { if case .bullet = $0 { return true }; return false }.count
+        let date = r?.date.map { "publiée le \($0.formatted(date: .abbreviated, time: .omitted))" }
+        HStack(spacing: 8) {
+            if let i = hub.installed[entry.id], let r, i.version != r.version {
+                FicheVersionChip(version: i.version)
+                Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.faint)
+                FicheVersionChip(version: r.version, strong: true)
+            }
+            Text([count > 1 ? "\(count) nouveautés" : nil, date].compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 12.5)).foregroundStyle(Theme.faint)
+        }
     }
 
     private func images(_ r: Release?) -> [URL] {
