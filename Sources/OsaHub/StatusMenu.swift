@@ -68,7 +68,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
 
         // ── OsaWallpaper (fusionné) ──
-        if let wp = hub.entries.first(where: { $0.id == "osawallpaper" }), hub.installed[wp.id] != nil {
+        // installé (Applications) ou simplement ouvert depuis ailleurs (copie de développement…)
+        if let wp = hub.entries.first(where: { $0.id == "osawallpaper" }), hub.installed[wp.id] != nil || suite.wallpaperRunning {
             menu.addItem(.separator())
             header("OsaWallpaper")
             if let w = suite.wallpaper, suite.wallpaperRunning {
@@ -79,6 +80,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
                 }
                 add("Réglages d’OsaWallpaper…") { [suite] in suite.wallpaperAction("settings") }
                 add("Quitter OsaWallpaper") { [suite] in suite.wallpaperAction("quit") }
+            } else if suite.wallpaperRunning {
+                add("OsaWallpaper ne répond pas encore…", enabled: false)
             } else {
                 add("Lancer OsaWallpaper") { [hub] in hub.open(wp) }
             }
