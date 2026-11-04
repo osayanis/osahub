@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ n: Notification) {
         UNUserNotificationCenter.current().delegate = self
         Hub.shared.start()
+        // OSAHUB_NO_SUITE=1 : instance de test (captures) — ni icône dans la barre des menus, ni
+        // messages à OsaWallpaper, pour ne pas déranger le vrai OsaHUB.
+        guard ProcessInfo.processInfo.environment["OSAHUB_NO_SUITE"] == nil else { watchWindows(); return }
         let suite = SuiteHub()
         suite.start()
         self.suite = suite
