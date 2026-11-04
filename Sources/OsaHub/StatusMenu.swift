@@ -40,6 +40,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         }
 
         // ── OsaHUB ──
+        if let r = hub.selfRelease {
+            switch hub.selfJob {
+            case .downloading(let p)?: add("OsaHUB \(r.version) : téléchargement \(Int(p * 100)) %", enabled: false)
+            case .failed?: add("OsaHUB \(r.version) : réessayer la mise à jour") { [hub] in hub.updateSelf() }
+            default: add("Mettre à jour OsaHUB (\(r.version))") { [hub] in hub.updateSelf() }
+            }
+            menu.addItem(.separator())
+        }
         if hub.updates.isEmpty {
             add(hub.checking ? "Recherche des mises à jour…" : "Toutes tes apps sont à jour", enabled: false)
         } else {
@@ -80,6 +88,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         add("Ouvrir OsaHUB", key: "o") { StatusMenu.show() }
         add("Recherche rapide…") { [hub] in StatusMenu.show(); hub.palette = true }
         add("Rechercher des mises à jour") { [hub] in Task { await hub.refresh() } }
+        add("Mettre à jour OsaHUB tout seul") { [hub] in hub.setAutoSelf(!hub.autoSelf) }
+        menu.items.last?.state = hub.autoSelf ? .on : .off
         menu.addItem(.separator())
         add("Quitter OsaHUB", key: "q") { NSApp.terminate(nil) }
     }

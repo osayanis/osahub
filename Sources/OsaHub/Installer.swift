@@ -154,9 +154,9 @@ enum Installer {
     }
 
     /// Mise à jour d'OsaHUB lui-même : un petit script attend qu'il se ferme, remplace l'app
-    /// et la relance.
+    /// et la relance (en arrière-plan, sans fenêtre, si c'est une mise à jour automatique).
     @MainActor
-    static func updateSelf(from zip: URL, progress: @escaping (Double) -> Void) async throws {
+    static func updateSelf(from zip: URL, background: Bool = false, progress: @escaping (Double) -> Void) async throws {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("OsaHub-self-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         let app = try await fetchApp(zip, into: work, bundleId: Bundle.main.bundleIdentifier ?? "com.osalabs.osahub",
@@ -169,7 +169,7 @@ enum Installer {
         rm -rf "\(current)"
         /usr/bin/ditto "\(app.path)" "\(current)"
         rm -rf "\(work.path)"
-        open "\(current)"
+        \(background ? "open -g \"\(current)\" --args --auto-update" : "open \"\(current)\"")
         """.write(to: script, atomically: true, encoding: .utf8)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")

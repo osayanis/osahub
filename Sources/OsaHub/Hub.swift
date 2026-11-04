@@ -9,6 +9,9 @@ final class Hub: ObservableObject {
     static let shared = Hub()
     static let selfRepo = "osayanis/osahub"
     static let selfAsset = "OsaHUB.zip"
+    /// Relancé après une mise à jour automatique : on reste caché (pas de fenêtre, pas de Dock).
+    static let autoUpdated = CommandLine.arguments.contains("--auto-update")
+    static let launchedAt = Date()
 
     struct Installed: Equatable {
         var version: String
@@ -37,6 +40,8 @@ final class Hub: ObservableObject {
     @Published var changelog: AppEntry?
     @Published var selfRelease: Release?
     @Published var selfJob: Job?
+    /// OsaHUB se met à jour tout seul (activé par défaut), quand sa fenêtre est fermée.
+    @Published var autoSelf = UserDefaults.standard.object(forKey: "autoSelf") as? Bool ?? true
     @Published var splashDone = false
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     /// Apps de la suite ouvertes en ce moment.
@@ -90,6 +95,7 @@ final class Hub: ObservableObject {
     // MARK: Vérifications
 
     func start() {
+        _ = Hub.launchedAt
         URLCache.shared = URLCache(memoryCapacity: 60 << 20, diskCapacity: 300 << 20)
         scanInstalled()
         Task { await refresh() }
@@ -218,6 +224,7 @@ final class Hub: ObservableObject {
         for e in updates where autoUpdate.contains(e.id) && !running.contains(e.id) && jobs[e.id] == nil {
             install(e)
         }
+        autoUpdateSelfIfIdle()
     }
 
     // MARK: Nouveautés
@@ -375,12 +382,49 @@ final class Hub: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    func updateSelf() {
+    /// Une fenêtre d'OsaHUB est ouverte (on ne le relance pas sous les yeux de quelqu'un).
+    var windowOpen: Bool {
+        NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.titled) && $0.sheetParent == nil && !($0 is NSPanel) }
+    }
+
+    /// Mise à jour d'OsaHUB toute seule : seulement fenêtre fermée et sans installation en cours ;
+    /// il se relance caché, dans la barre des menus. Appelé après chaque vérification et quand la
+    /// fenêtre se ferme.
+    func autoUpdateSelfIfIdle() {
+        guard autoSelf, selfRelease?.zip != nil, selfJob == nil else { return }
+        // juste lancé : la fenêtre n'est peut-être pas encore affichée, on attend un peu
+        let age = Date().timeIntervalSince(Hub.launchedAt)
+        if age < 15 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15 - age) { Hub.shared.autoUpdateSelfIfIdle() }
+            return
+        }
+        guard !windowOpen else { return }
+        let busy = jobs.values.contains { if case .downloading = $0 { return true }; return $0 == .installing }
+        guard !busy else { return }
+        updateSelf(background: true)
+    }
+
+    func setAutoSelf(_ on: Bool) {
+        autoSelf = on
+        defaults.set(on, forKey: "autoSelf")
+        if on { autoUpdateSelfIfIdle() }
+    }
+
+    /// Juste relancé par une mise à jour automatique : une notification le dit.
+    func announceSelfUpdate() {
+        guard Hub.autoUpdated else { return }
+        let c = UNMutableNotificationContent()
+        c.title = "OsaHUB s'est mis à jour"
+        c.body = "Version \(Hub.version) installée. Il continue dans la barre des menus."
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "osahub.\(Hub.version)", content: c, trigger: nil))
+    }
+
+    func updateSelf(background: Bool = false) {
         guard let zip = selfRelease?.zip, selfJob == nil || selfJob.map({ if case .failed = $0 { return true } else { return false } }) == true else { return }
         selfJob = .downloading(0)
         Task {
             do {
-                try await Installer.updateSelf(from: zip) { p in
+                try await Installer.updateSelf(from: zip, background: background) { p in
                     Task { @MainActor in Hub.shared.selfJob = .downloading(p) }
                 }
             } catch {

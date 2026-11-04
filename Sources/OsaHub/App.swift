@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         self.suite = suite
         statusMenu = StatusMenu(suite: suite)
         watchWindows()
+        Hub.shared.announceSelfUpdate()
     }
 
     func applicationWillTerminate(_ n: Notification) { suite?.stop() }
@@ -58,7 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             guard let closing = n.object as? NSWindow, isAppWindow(closing) else { return }
             DispatchQueue.main.async {
                 let others = NSApp.windows.contains { $0 !== closing && $0.isVisible && isAppWindow($0) }
-                if !others { NSApp.setActivationPolicy(.accessory) }
+                if !others {
+                    NSApp.setActivationPolicy(.accessory)
+                    MainActor.assumeIsolated { Hub.shared.autoUpdateSelfIfIdle() }
+                }
             }
         }
     }
@@ -66,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// Une feuille ouverte (les nouveautés) faisait refuser « Quitter » envoyé par AppleScript ou
     /// par une mise à jour : on ferme les feuilles puis on quitte.
     func applicationWillFinishLaunching(_ n: Notification) {
+        // relancé par une mise à jour automatique : pas d'icône dans le Dock
+        if Hub.autoUpdated { NSApp.setActivationPolicy(.accessory) }
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(quitEvent(_:reply:)),
                                                      forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEQuitApplication))
     }

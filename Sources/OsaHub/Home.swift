@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct RootView: View {
+    @MainActor static var hiddenOnce = false
     @EnvironmentObject private var hub: Hub
     @Environment(\.openWindow) private var openWindow
     @State private var selected: AppEntry?
@@ -61,6 +62,13 @@ struct RootView: View {
             hub.openMain = { [openWindow] in
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
+            }
+            // Relancé par une mise à jour automatique : la fenêtre se referme aussitôt.
+            if Hub.autoUpdated && !RootView.hiddenOnce {
+                RootView.hiddenOnce = true
+                DispatchQueue.main.async {
+                    for w in NSApp.windows where w.isVisible && w.styleMask.contains(.titled) && !(w is NSPanel) { w.close() }
+                }
             }
         }
     }
