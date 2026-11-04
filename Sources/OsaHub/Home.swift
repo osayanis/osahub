@@ -48,7 +48,9 @@ struct RootView: View {
             }
             LivingLogo(docked: hub.splashDone, finish: {
                 withAnimation(.spring(response: 0.85, dampingFraction: 0.86)) { hub.splashDone = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { sheetsAllowed = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    sheetsAllowed = ProcessInfo.processInfo.environment["OSAHUB_NO_SHEETS"] == nil
+                }
             }, tap: { go(nil) })
             if hub.palette {
                 CommandPalette { go($0) }
@@ -59,6 +61,8 @@ struct RootView: View {
     }
 
     private func appeared() {
+        // OSAHUB_NO_SHEETS=1 : captures sans la feuille des nouveautés (et sans la marquer vue)
+        if ProcessInfo.processInfo.environment["OSAHUB_NO_SHEETS"] != nil { sheetsAllowed = false; return }
         if hub.splashDone { sheetsAllowed = true }
         // Pour les captures : OSAHUB_OPEN=<id> ouvre directement la fiche d'une app.
         if ProcessInfo.processInfo.environment["OSAHUB_PALETTE"] != nil {
@@ -196,13 +200,19 @@ struct RefreshButton: View {
 
 struct HomeView: View {
     @EnvironmentObject private var hub: Hub
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let select: (AppEntry) -> Void
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 StatusHero()
                     .appear(0)
+                MaisonStats()
+                    .appear(1)
+                MaisonLauncher()
+                    .appear(2)
                 VStack(alignment: .leading, spacing: 14) {
                     SectionTitle(title: "Les apps", detail: "\(hub.installed.count) sur \(hub.entries.count) installées")
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 20)], spacing: 20) {
@@ -211,9 +221,15 @@ struct HomeView: View {
                         }
                     }
                 }
+                HStack(alignment: .top, spacing: 20) {
+                    MaisonJournal()
+                    MaisonTips()
+                        .frame(width: 360)
+                }
+                .appear(6)
                 ServicesStrip()
-                    .appear(6)
-                Footer()
+                    .appear(7)
+                Footer().id("bas")
             }
             .padding(.horizontal, 36)
             .padding(.top, 96)
@@ -222,6 +238,14 @@ struct HomeView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.never)
+        .background(DustField(reduceMotion: reduceMotion, intensity: 0.45))
+        .onAppear {
+            // captures : OSAHUB_SCROLL=bas descend en bas de l'accueil
+            if ProcessInfo.processInfo.environment["OSAHUB_SCROLL"] == "bas" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { proxy.scrollTo("bas", anchor: .bottom) }
+            }
+        }
+        }
     }
 }
 

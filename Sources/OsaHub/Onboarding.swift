@@ -24,7 +24,7 @@ struct OnboardingView: View {
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            OnboardingDust(reduceMotion: reduceMotion).opacity(leaving ? 0 : 1)
+            DustField(reduceMotion: reduceMotion).opacity(leaving ? 0 : 1)
             Backdrop()
 
             VStack(spacing: 0) {
@@ -536,8 +536,10 @@ private struct OnboardingDots: View {
 // MARK: - Poussière
 
 /// Des points blancs à peine visibles qui dérivent lentement (fond vivant, très discret).
-private struct OnboardingDust: View {
+/// Partagé avec l'écran principal (plus discret encore, `intensity` < 1).
+struct DustField: View {
     let reduceMotion: Bool
+    var intensity: Double = 1
     @State private var start = Date()
     private static let seeds: [(x: Double, y: Double, r: Double, s: Double, p: Double)] = {
         var g = SeededRandom(seed: 7)
@@ -552,7 +554,7 @@ private struct OnboardingDust: View {
                     let y = (d.y - t * d.s).truncatingRemainder(dividingBy: 1)
                     let yy = (y < 0 ? y + 1 : y) * size.height
                     let x = d.x * size.width + CGFloat(sin(t * 0.3 + d.p)) * 12
-                    let a = 0.05 + 0.1 * (0.5 + 0.5 * sin(t * 0.8 + d.p))
+                    let a = (0.05 + 0.1 * (0.5 + 0.5 * sin(t * 0.8 + d.p))) * intensity
                     ctx.fill(Path(ellipseIn: CGRect(x: x, y: yy, width: d.r * 2, height: d.r * 2)), with: .color(.white.opacity(a)))
                 }
             }
