@@ -23,23 +23,45 @@ struct OsaHubApp: App {
                     .keyboardShortcut("k")
             }
         }
-
-        MenuBarExtra {
-            MenuContent().environmentObject(hub)
-        } label: {
-            Image(systemName: hub.updates.isEmpty ? "square.grid.2x2" : "square.grid.2x2.fill")
-        }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    private var suite: SuiteHub?
+    private var statusMenu: StatusMenu?
+
     func applicationDidFinishLaunching(_ n: Notification) {
         UNUserNotificationCenter.current().delegate = self
         Hub.shared.start()
+        let suite = SuiteHub()
+        suite.start()
+        self.suite = suite
+        statusMenu = StatusMenu(suite: suite)
+        watchWindows()
     }
+
+    func applicationWillTerminate(_ n: Notification) { suite?.stop() }
 
     /// Fenêtre fermée : OsaHUB reste dans la barre des menus pour surveiller les mises à jour.
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
+
+    /// Fenêtre fermée : OsaHUB quitte le Dock mais continue en arrière-plan (barre des menus) ;
+    /// elle y revient dès qu'une fenêtre se rouvre.
+    private func watchWindows() {
+        let nc = NotificationCenter.default
+        func isAppWindow(_ w: NSWindow) -> Bool { w.styleMask.contains(.titled) && w.sheetParent == nil && !(w is NSPanel) }
+        nc.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { n in
+            guard let w = n.object as? NSWindow, isAppWindow(w), NSApp.activationPolicy() != .regular else { return }
+            NSApp.setActivationPolicy(.regular)
+        }
+        nc.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { n in
+            guard let closing = n.object as? NSWindow, isAppWindow(closing) else { return }
+            DispatchQueue.main.async {
+                let others = NSApp.windows.contains { $0 !== closing && $0.isVisible && isAppWindow($0) }
+                if !others { NSApp.setActivationPolicy(.accessory) }
+            }
+        }
+    }
 
     /// Une feuille ouverte (les nouveautés) faisait refuser « Quitter » envoyé par AppleScript ou
     /// par une mise à jour : on ferme les feuilles puis on quitte.

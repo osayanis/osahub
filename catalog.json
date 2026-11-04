@@ -10,7 +10,9 @@
     "accent": "lilac",
     "symbol": "rectangle.topthird.inset.filled",
     "icon": "https://raw.githubusercontent.com/osayanis/osanotch-native/HEAD/.github/assets/icon.png",
-    "screenshots": ["https://raw.githubusercontent.com/osayanis/osanotch-native/HEAD/.github/assets/banner.png"]
+    "screenshots": [
+      "https://raw.githubusercontent.com/osayanis/osanotch-native/HEAD/.github/assets/banner.png"
+    ]
   },
   {
     "id": "osawallpaper",
@@ -59,6 +61,11 @@
     "asset": "OsaWeight.zip",
     "accent": "blue",
     "symbol": "scalemass.fill",
-    "screenshots": []
+    "screenshots": [
+      "https://raw.githubusercontent.com/osayanis/osahub/main/assets/osaweight/banner.jpg",
+      "https://raw.githubusercontent.com/osayanis/osahub/main/assets/osaweight/pesee.png",
+      "https://raw.githubusercontent.com/osayanis/osahub/main/assets/osaweight/prete.png"
+    ],
+    "icon": "https://raw.githubusercontent.com/osayanis/osahub/main/assets/osaweight/icon.png"
   }
 ]

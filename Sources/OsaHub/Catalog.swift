@@ -26,6 +26,11 @@ enum Catalog {
         URL(string: "https://raw.githubusercontent.com/\(repo)/HEAD/.github/assets/\(file)")!
     }
 
+    /// Images rangées dans le dépôt d'OsaHUB (pour une app qui n'a pas encore de dépôt public).
+    static func hubAsset(_ path: String) -> URL {
+        URL(string: "https://raw.githubusercontent.com/osayanis/osahub/main/assets/\(path)")!
+    }
+
     /// Le catalogue embarqué, utilisé hors ligne ou si le catalogue en ligne est illisible.
     static let builtIn: [AppEntry] = [
         AppEntry(
@@ -59,7 +64,8 @@ enum Catalog {
             description: "Les trackpads Force Touch ont des capteurs de force sous la dalle : OsaWeight les lit et affiche le poids de ce que tu poses dessus.",
             repo: "osayanis/osaweight", bundleId: "com.osalabs.osaweight", asset: "OsaWeight.zip",
             accent: "blue", symbol: "scalemass.fill",
-            icon: nil, screenshots: []),
+            icon: hubAsset("osaweight/icon.png"),
+            screenshots: ["banner.jpg", "pesee.png", "prete.png"].map { hubAsset("osaweight/\($0)") }),
     ]
 
     static func fetchRemote() async -> [AppEntry]? {
